@@ -1,0 +1,5 @@
+<resources>
+    <string name="app_name">Agenda Acadêmica</string>
+    <string name="app_widget_name">Agenda de Hoje</string>
+    <string name="app_widget_description">Visualização rápida das atividades acadêmicas e aulas do dia</string>
+</resources>

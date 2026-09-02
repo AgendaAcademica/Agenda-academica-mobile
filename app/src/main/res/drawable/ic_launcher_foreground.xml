@@ -1,0 +1,64 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    
+    <!-- Calendar Card Base -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M28,32 C28,28.7 30.7,26 34,26 L74,26 C77.3,26 80,28.7 80,32 L80,78 C80,81.3 77.3,84 74,84 L34,84 C30.7,84 28,81.3 28,78 Z" />
+    
+    <!-- Calendar Header (Deep Blue / Purple) -->
+    <path
+        android:fillColor="#2563EB"
+        android:pathData="M28,32 C28,28.7 30.7,26 34,26 L74,26 C77.3,26 80,28.7 80,32 L80,42 L28,42 Z" />
+    
+    <!-- Calendar Rings/Pins -->
+    <path
+        android:fillColor="#93C5FD"
+        android:pathData="M38,22 C38,20.9 38.9,20 40,20 C41.1,20 42,20.9 42,22 L42,28 C42,29.1 41.1,30 40,30 C38.9,30 38,29.1 38,28 Z
+                         M66,22 C66,20.9 66.9,20 68,20 C69.1,20 70,20.9 70,22 L70,28 C70,29.1 69.1,30 68,30 C66.9,30 66,29.1 66,28 Z" />
+                         
+    <!-- Discipline Color Indicators (Dots/Bars) -->
+    <!-- Blue (Calculo) -->
+    <path
+        android:fillColor="#2563EB"
+        android:pathData="M35,49 L55,49 C56.1,49 57,49.9 57,51 C57,52.1 56.1,53 55,53 L35,53 C33.9,53 33,52.1 33,51 C33,49.9 33.9,49 35,49 Z" />
+    <path
+        android:fillColor="#2563EB"
+        android:pathData="M61,51 A2,2 0 1,1 65,51 A2,2 0 1,1 61,51" />
+
+    <!-- Green (Eng. Software) -->
+    <path
+        android:fillColor="#16A34A"
+        android:pathData="M35,58 L48,58 C49.1,58 50,58.9 50,60 C50,61.1 49.1,62 48,62 L35,62 C33.9,62 33,61.1 33,60 C33,58.9 33.9,58 35,58 Z" />
+    <path
+        android:fillColor="#16A34A"
+        android:pathData="M54,60 A2,2 0 1,1 58,60 A2,2 0 1,1 54,60" />
+    <path
+        android:fillColor="#16A34A"
+        android:pathData="M61,60 A2,2 0 1,1 65,60 A2,2 0 1,1 61,60" />
+
+    <!-- Orange (Banco de Dados) -->
+    <path
+        android:fillColor="#EA580C"
+        android:pathData="M35,67 L58,67 C59.1,67 60,67.9 60,69 C60,70.1 59.1,71 58,71 L35,71 C33.9,71 33,70.1 33,69 C33,67.9 33.9,67 35,67 Z" />
+    <path
+        android:fillColor="#EA580C"
+        android:pathData="M64,69 A2,2 0 1,1 68,69 A2,2 0 1,1 64,69" />
+
+    <!-- Purple (Estrutura de Dados) -->
+    <path
+        android:fillColor="#9333EA"
+        android:pathData="M35,76 L50,76 C51.1,76 52,76.9 52,78 C52,79.1 51.1,80 50,80 L35,80 C33.9,80 33,79.1 33,78 C33,76.9 33.9,76 35,76 Z" />
+    <path
+        android:fillColor="#9333EA"
+        android:pathData="M56,78 A2,2 0 1,1 60,78 A2,2 0 1,1 56,78" />
+
+    <!-- AI Sparkle Badge at Top-Right -->
+    <path
+        android:fillColor="#FBBF24"
+        android:pathData="M78,20 L80,26 L86,28 L80,30 L78,36 L76,30 L70,28 L76,26 Z" />
+</vector>
