@@ -68,9 +68,12 @@ val WEEKDAY_OPTIONS = listOf(
 @Composable
 fun AddEditDisciplineDialog(
     initialDiscipline: Discipline? = null,
+    existingDisciplines: List<Discipline> = emptyList(),
+    existingActivities: List<AcademicActivity> = emptyList(),
     onDismiss: () -> Unit,
     onSave: (Discipline, List<AcademicActivity>) -> Unit
 ) {
+    var duplicateError by remember { mutableStateOf(false) }
     val context = LocalContext.current
 
     var name by remember { mutableStateOf(initialDiscipline?.name ?: "") }
@@ -80,6 +83,16 @@ fun AddEditDisciplineDialog(
     var term by remember { mutableStateOf(initialDiscipline?.term ?: "2026/2") }
     var selectedColor by remember { mutableStateOf(initialDiscipline?.colorHex ?: "#0061A4") }
     var notes by remember { mutableStateOf(initialDiscipline?.syllabusNotes ?: "") }
+    val existingGeneratedClasses = remember(initialDiscipline?.id, existingActivities) {
+        existingActivities.filter {
+            it.disciplineId == initialDiscipline?.id &&
+                it.activityType == ActivityType.AULA &&
+                it.sourceDocument == "Horário das Aulas"
+        }
+    }
+    val scheduleTimes = remember(initialDiscipline?.schedule) {
+        Regex("\\b\\d{2}:\\d{2}\\b").findAll(initialDiscipline?.schedule.orEmpty()).map { it.value }.toList()
+    }
 
     // Class Schedule configurations
     var selectedDays by remember {
@@ -102,11 +115,41 @@ fun AddEditDisciplineDialog(
         )
     }
 
-    var startTime by remember { mutableStateOf("08:00") }
-    var endTime by remember { mutableStateOf("10:00") }
-    var startDateBr by remember { mutableStateOf("01/09/2026") }
-    var repeatUntilDateBr by remember { mutableStateOf("15/12/2026") }
-    var autoGenerateCalendarClasses by remember { mutableStateOf(true) }
+    var startTime by remember { mutableStateOf(scheduleTimes.getOrNull(0) ?: existingGeneratedClasses.firstOrNull()?.time ?: "08:00") }
+    var endTime by remember { mutableStateOf(scheduleTimes.getOrNull(1) ?: "10:00") }
+    var startDateBr by remember { mutableStateOf(existingGeneratedClasses.minOfOrNull { it.date }?.let(::isoToBrazilianDate) ?: "01/09/2026") }
+    var repeatUntilDateBr by remember { mutableStateOf(existingGeneratedClasses.maxOfOrNull { it.date }?.let(::isoToBrazilianDate) ?: "15/12/2026") }
+    var autoGenerateCalendarClasses by remember { mutableStateOf(initialDiscipline == null) }
+    val initialScheduleFingerprint = remember(initialDiscipline?.id) {
+        listOf(selectedDays.sorted(), startTime, endTime, startDateBr, repeatUntilDateBr).joinToString("|")
+    }
+    val currentScheduleFingerprint = listOf(
+        selectedDays.sorted(), startTime, endTime, startDateBr, repeatUntilDateBr
+    ).joinToString("|")
+
+    LaunchedEffect(currentScheduleFingerprint) {
+        if (initialDiscipline != null && currentScheduleFingerprint != initialScheduleFingerprint) {
+            autoGenerateCalendarClasses = true
+        }
+    }
+
+    fun openStartTimePicker() {
+        val parts = startTime.split(":")
+        val hour = parts.getOrNull(0)?.toIntOrNull() ?: 8
+        val minute = parts.getOrNull(1)?.toIntOrNull() ?: 0
+        TimePickerDialog(context, { _, selectedHour, selectedMinute ->
+            startTime = String.format("%02d:%02d", selectedHour, selectedMinute)
+        }, hour, minute, true).show()
+    }
+
+    fun openEndTimePicker() {
+        val parts = endTime.split(":")
+        val hour = parts.getOrNull(0)?.toIntOrNull() ?: 10
+        val minute = parts.getOrNull(1)?.toIntOrNull() ?: 0
+        TimePickerDialog(context, { _, selectedHour, selectedMinute ->
+            endTime = String.format("%02d:%02d", selectedHour, selectedMinute)
+        }, hour, minute, true).show()
+    }
 
     // Calculate preview of generated classes
     val generatedClasses = remember(name, selectedDays, startTime, startDateBr, repeatUntilDateBr, autoGenerateCalendarClasses) {
@@ -318,66 +361,44 @@ fun AddEditDisciplineDialog(
                                 horizontalArrangement = Arrangement.spacedBy(8.dp)
                             ) {
                                 // Start Time
-                                OutlinedTextField(
-                                    value = startTime,
-                                    onValueChange = { startTime = it },
-                                    label = { Text("Horário Início") },
-                                    readOnly = true,
-                                    modifier = Modifier
-                                        .weight(1f)
-                                        .clickable {
-                                            val parts = startTime.split(":")
-                                            val h = parts.getOrNull(0)?.toIntOrNull() ?: 8
-                                            val m = parts.getOrNull(1)?.toIntOrNull() ?: 0
-                                            TimePickerDialog(context, { _, hourOfDay, minute ->
-                                                startTime = String.format("%02d:%02d", hourOfDay, minute)
-                                            }, h, m, true).show()
-                                        },
-                                    trailingIcon = {
-                                        IconButton(onClick = {
-                                            val parts = startTime.split(":")
-                                            val h = parts.getOrNull(0)?.toIntOrNull() ?: 8
-                                            val m = parts.getOrNull(1)?.toIntOrNull() ?: 0
-                                            TimePickerDialog(context, { _, hourOfDay, minute ->
-                                                startTime = String.format("%02d:%02d", hourOfDay, minute)
-                                            }, h, m, true).show()
-                                        }) {
+                                Box(modifier = Modifier.weight(1f)) {
+                                    OutlinedTextField(
+                                        value = startTime,
+                                        onValueChange = {},
+                                        label = { Text("Horário Início") },
+                                        readOnly = true,
+                                        modifier = Modifier.fillMaxWidth(),
+                                        trailingIcon = {
                                             Icon(Icons.Default.AccessTime, contentDescription = "Selecionar horário")
-                                        }
-                                    },
-                                    shape = RoundedCornerShape(12.dp)
-                                )
+                                        },
+                                        shape = RoundedCornerShape(12.dp)
+                                    )
+                                    Box(
+                                        modifier = Modifier
+                                            .matchParentSize()
+                                            .clickable(onClick = ::openStartTimePicker)
+                                    )
+                                }
 
                                 // End Time
-                                OutlinedTextField(
-                                    value = endTime,
-                                    onValueChange = { endTime = it },
-                                    label = { Text("Horário Término") },
-                                    readOnly = true,
-                                    modifier = Modifier
-                                        .weight(1f)
-                                        .clickable {
-                                            val parts = endTime.split(":")
-                                            val h = parts.getOrNull(0)?.toIntOrNull() ?: 10
-                                            val m = parts.getOrNull(1)?.toIntOrNull() ?: 0
-                                            TimePickerDialog(context, { _, hourOfDay, minute ->
-                                                endTime = String.format("%02d:%02d", hourOfDay, minute)
-                                            }, h, m, true).show()
-                                        },
-                                    trailingIcon = {
-                                        IconButton(onClick = {
-                                            val parts = endTime.split(":")
-                                            val h = parts.getOrNull(0)?.toIntOrNull() ?: 10
-                                            val m = parts.getOrNull(1)?.toIntOrNull() ?: 0
-                                            TimePickerDialog(context, { _, hourOfDay, minute ->
-                                                endTime = String.format("%02d:%02d", hourOfDay, minute)
-                                            }, h, m, true).show()
-                                        }) {
+                                Box(modifier = Modifier.weight(1f)) {
+                                    OutlinedTextField(
+                                        value = endTime,
+                                        onValueChange = {},
+                                        label = { Text("Horário Término") },
+                                        readOnly = true,
+                                        modifier = Modifier.fillMaxWidth(),
+                                        trailingIcon = {
                                             Icon(Icons.Default.AccessTime, contentDescription = "Selecionar horário")
-                                        }
-                                    },
-                                    shape = RoundedCornerShape(12.dp)
-                                )
+                                        },
+                                        shape = RoundedCornerShape(12.dp)
+                                    )
+                                    Box(
+                                        modifier = Modifier
+                                            .matchParentSize()
+                                            .clickable(onClick = ::openEndTimePicker)
+                                    )
+                                }
                             }
 
                             Spacer(modifier = Modifier.height(12.dp))
@@ -477,7 +498,12 @@ fun AddEditDisciplineDialog(
                                     )
                                     Text(
                                         text = if (generatedClasses.isNotEmpty())
-                                            "📅 ${generatedClasses.size} aulas serão criadas e listadas na aba de Aulas"
+                                            if (initialDiscipline == null)
+                                                "📅 ${generatedClasses.size} aulas serão criadas e listadas na aba de Aulas"
+                                            else
+                                                "📅 As aulas existentes serão substituídas por ${generatedClasses.size} novas ocorrências"
+                                        else if (initialDiscipline != null)
+                                            "As aulas existentes serão mantidas"
                                         else
                                             "Cria automaticamente os eventos das aulas até $repeatUntilDateBr",
                                         fontSize = 10.sp,
@@ -574,7 +600,21 @@ fun AddEditDisciplineDialog(
                                 syllabusNotes = notes
                             )
 
-                            onSave(disciplineToSave, generatedClasses)
+                            fun String.normalized() = trim().lowercase()
+                            val isDuplicate = existingDisciplines.any { existing ->
+                                existing.id != disciplineToSave.id &&
+                                    existing.name.normalized() == disciplineToSave.name.normalized() &&
+                                    existing.code.normalized() == disciplineToSave.code.normalized() &&
+                                    existing.professor.normalized() == disciplineToSave.professor.normalized() &&
+                                    existing.classroom.normalized() == disciplineToSave.classroom.normalized() &&
+                                    existing.schedule.normalized() == disciplineToSave.schedule.normalized() &&
+                                    existing.term.normalized() == disciplineToSave.term.normalized()
+                            }
+
+                            duplicateError = isDuplicate
+                            if (!isDuplicate) {
+                                onSave(disciplineToSave, generatedClasses)
+                            }
                         }
                     },
                     modifier = Modifier.fillMaxWidth(),
@@ -585,10 +625,24 @@ fun AddEditDisciplineDialog(
                     Spacer(modifier = Modifier.width(6.dp))
                     Text(
                         text = if (generatedClasses.isNotEmpty())
-                            "Salvar Disciplina (+ ${generatedClasses.size} Aulas)"
+                            if (initialDiscipline == null)
+                                "Salvar Disciplina (+ ${generatedClasses.size} Aulas)"
+                            else
+                                "Salvar e Recriar ${generatedClasses.size} Aulas"
                         else
                             "Salvar Disciplina",
                         fontWeight = FontWeight.Bold
+                    )
+                }
+
+                if (duplicateError) {
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Text(
+                        text = "Esta disciplina já foi adicionada com os mesmos dados.",
+                        color = MaterialTheme.colorScheme.error,
+                        fontSize = 12.sp,
+                        modifier = Modifier.fillMaxWidth(),
+                        textAlign = androidx.compose.ui.text.style.TextAlign.Center
                     )
                 }
             }
@@ -647,4 +701,3 @@ fun generateClassOccurrences(
 
     return result
 }
-

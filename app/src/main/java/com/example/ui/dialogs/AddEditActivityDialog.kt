@@ -78,7 +78,8 @@ fun AddEditActivityDialog(
     var selectedStatus by remember { mutableStateOf(initialActivity?.status ?: ActivityStatus.PENDENTE) }
     
     // Internal ISO dates (YYYY-MM-DD)
-    var dateIso by remember { mutableStateOf(initialActivity?.date ?: "2026-09-01") }
+    val todayIso = remember { java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.getDefault()).format(java.util.Date()) }
+    var dateIso by remember { mutableStateOf(initialActivity?.date ?: todayIso) }
     var dueDateIso by remember { mutableStateOf(initialActivity?.dueDate ?: "") }
     var time by remember { mutableStateOf(initialActivity?.time ?: "08:00") }
     var notes by remember { mutableStateOf(initialActivity?.notes ?: "") }
@@ -90,6 +91,7 @@ fun AddEditActivityDialog(
 
     var typeDropdownExpanded by remember { mutableStateOf(false) }
     var priorityDropdownExpanded by remember { mutableStateOf(false) }
+    val isDisciplineLocked = initialActivity == null && preselectedDisciplineId != null
 
     Dialog(
         onDismissRequest = onDismiss,
@@ -140,16 +142,58 @@ fun AddEditActivityDialog(
 
                 Spacer(modifier = Modifier.height(14.dp))
 
-                // Discipline Selection with Native Extra Option
-                Text(
-                    text = "Vínculo da Atividade:",
-                    fontSize = 13.sp,
-                    fontWeight = FontWeight.SemiBold,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-                Spacer(modifier = Modifier.height(8.dp))
+                // The discipline is fixed when this dialog is opened from its detail screen.
+                if (isDisciplineLocked) {
+                    val linkedDiscipline = disciplines.firstOrNull { it.id == preselectedDisciplineId }
+                    if (linkedDiscipline != null) {
+                        val linkedColor = parseColorHex(linkedDiscipline.colorHex)
+                        Surface(
+                            modifier = Modifier.fillMaxWidth(),
+                            shape = RoundedCornerShape(12.dp),
+                            color = linkedColor.copy(alpha = 0.10f),
+                            border = BorderStroke(1.dp, linkedColor.copy(alpha = 0.45f))
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Box(
+                                    modifier = Modifier.size(8.dp).clip(CircleShape).background(linkedColor)
+                                )
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(
+                                        text = linkedDiscipline.name,
+                                        fontSize = 13.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = MaterialTheme.colorScheme.onSurface
+                                    )
+                                    Text(
+                                        text = "Evento vinculado a esta disciplina",
+                                        fontSize = 10.sp,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                                Icon(
+                                    imageVector = Icons.Default.Lock,
+                                    contentDescription = "Disciplina definida",
+                                    tint = linkedColor,
+                                    modifier = Modifier.size(16.dp)
+                                )
+                            }
+                        }
+                    }
+                } else {
+                    // Discipline Selection with Native Extra Option
+                    Text(
+                        text = "Vínculo da Atividade:",
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Spacer(modifier = Modifier.height(8.dp))
 
-                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                     // Option 1: Native "Atividade Extra / Sem Disciplina"
                     val isExtraSelected = selectedDisciplineId == null
                     val extraColor = Color(0xFF7C3AED)
@@ -206,7 +250,7 @@ fun AddEditActivityDialog(
                     }
 
                     // Disciplines List
-                    disciplines.forEach { disc ->
+                        disciplines.forEach { disc ->
                         val isSelected = disc.id == selectedDisciplineId
                         val discColor = parseColorHex(disc.colorHex)
                         Surface(
@@ -252,6 +296,7 @@ fun AddEditActivityDialog(
                                     )
                                 }
                             }
+                        }
                         }
                     }
                 }
@@ -427,11 +472,13 @@ fun AddEditActivityDialog(
                                     title = title.trim(),
                                     description = description.trim(),
                                     activityType = selectedType,
-                                    date = dateIso.ifBlank { "2026-09-01" },
+                                    date = dateIso.ifBlank { todayIso },
+                                    originalDate = initialActivity?.originalDate,
                                     time = time.ifBlank { "08:00" },
                                     dueDate = dueDateIso.ifBlank { null },
                                     priority = selectedPriority,
                                     status = selectedStatus,
+                                    grade = initialActivity?.grade,
                                     sourceDocument = initialActivity?.sourceDocument ?: if (selectedDisciplineId == null) "Atividade Extra" else "Cadastro Manual",
                                     notes = notes
                                 )

@@ -32,7 +32,7 @@ fun parseColorHex(hex: String, defaultColor: Color = Color(0xFF0061A4)): Color {
 }
 
 fun getTimePeriod(time: String): String {
-    val hour = time.split(":").firstOrNull()?.toIntOrNull() ?: 8
+    val hour = time.split(":").firstOrNull()?.toIntOrNull() ?: return "SEM HORÁRIO"
     return when {
         hour < 12 -> "MANHÃ"
         hour < 18 -> "TARDE"
@@ -200,7 +200,8 @@ fun getBrazilianDayOfWeekName(dayOfWeek: Int): String {
 fun StatusSelector(
     status: ActivityStatus,
     onStatusChange: (ActivityStatus) -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    availableStatuses: List<ActivityStatus> = ActivityStatus.values().toList()
 ) {
     Row(
         modifier = modifier
@@ -210,7 +211,7 @@ fun StatusSelector(
             .padding(3.dp),
         horizontalArrangement = Arrangement.spacedBy(4.dp)
     ) {
-        ActivityStatus.values().forEach { s ->
+        availableStatuses.forEach { s ->
             val isSelected = s == status
             val bg = if (isSelected) {
                 when (s) {
@@ -243,4 +244,3 @@ fun StatusSelector(
         }
     }
 }
-

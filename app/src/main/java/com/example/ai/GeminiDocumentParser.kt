@@ -30,7 +30,7 @@ data class ExtractedSyllabus(
 data class ExtractedEvent(
     val title: String,
     val date: String, // YYYY-MM-DD
-    val time: String = "08:00", // HH:MM
+    val time: String = "", // HH:MM; vazio quando não informado
     val activityType: ActivityType = ActivityType.TRABALHO,
     val priority: Priority = Priority.MEDIA,
     val description: String = "",
@@ -120,7 +120,7 @@ object GeminiDocumentParser {
                 {
                   "title": "Nome descritivo da atividade ou aula",
                   "date": "YYYY-MM-DD (usando ano 2026 e datas identificadas)",
-                  "time": "HH:MM (horário de início ou entrega)",
+                  "time": "HH:MM (use string vazia quando o horário não estiver informado)",
                   "activityType": "AULA | PROVA | TRABALHO | EXERCICIO | SEMINARIO | PROJETO | LEITURA | PRAZO_ENTREGA | EVENTO",
                   "priority": "BAIXA | MEDIA | ALTA | URGENTE",
                   "description": "Detalhes dos tópicos ou instruções",
@@ -160,7 +160,7 @@ object GeminiDocumentParser {
                     ExtractedEvent(
                         title = eObj.optString("title", "Atividade"),
                         date = eObj.optString("date", "2026-09-10"),
-                        time = eObj.optString("time", "08:00"),
+                        time = eObj.optString("time", ""),
                         activityType = type,
                         priority = prio,
                         description = eObj.optString("description", ""),
@@ -195,20 +195,6 @@ object GeminiDocumentParser {
         var room = ""
         var sched = ""
         var color = "#2563EB"
-
-        // Check against sample signatures first for instant precision
-        for (sample in SampleAcademicDocuments.SAMPLES) {
-            if (text.contains(sample.disciplineName, ignoreCase = true) || fileName.contains(sample.id, ignoreCase = true)) {
-                discName = sample.disciplineName
-                prof = sample.professor
-                code = sample.disciplineCode
-                term = sample.term
-                room = sample.classroom
-                sched = sample.schedule
-                color = sample.colorHex
-                break
-            }
-        }
 
         // Generic regex extraction for subject & professor if not found
         if (discName == "Disciplina") {
@@ -252,7 +238,7 @@ object GeminiDocumentParser {
                     val h = timeMatcher.group(1)?.padStart(2, '0') ?: "08"
                     val m = timeMatcher.group(2) ?: "00"
                     "$h:$m"
-                } else "08:00"
+                } else ""
 
                 // Clean event title
                 var eventTitle = trimmed.substring(matcher.end()).trim().removePrefix(":").removePrefix("-").trim()

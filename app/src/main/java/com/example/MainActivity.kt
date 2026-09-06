@@ -13,13 +13,16 @@ import androidx.activity.viewModels
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
+import androidx.core.view.WindowCompat
 import androidx.navigation.NavGraph.Companion.findStartDestination
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
@@ -34,6 +37,7 @@ import com.example.ui.navigation.Screen
 import com.example.ui.screens.*
 import com.example.ui.theme.MyApplicationTheme
 import com.example.ui.viewmodel.AcademicViewModel
+import com.example.widget.AcademicDayAppWidgetProvider
 
 class MainActivity : ComponentActivity() {
     private val viewModel: AcademicViewModel by viewModels()
@@ -42,20 +46,43 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         setContent {
-            MyApplicationTheme {
-                MainApp(viewModel = viewModel)
+            val preferences = remember { getSharedPreferences("appearance_preferences", MODE_PRIVATE) }
+            val systemDarkTheme = isSystemInDarkTheme()
+            var darkTheme by remember {
+                mutableStateOf(preferences.getBoolean("dark_theme", systemDarkTheme))
+            }
+            MyApplicationTheme(darkTheme = darkTheme) {
+                val navigationBarColor = MaterialTheme.colorScheme.surface.toArgb()
+                SideEffect {
+                    window.navigationBarColor = navigationBarColor
+                    WindowCompat.getInsetsController(window, window.decorView).isAppearanceLightNavigationBars = !darkTheme
+                }
+                MainApp(
+                    viewModel = viewModel,
+                    isDarkTheme = darkTheme,
+                    onToggleTheme = {
+                        darkTheme = !darkTheme
+                        preferences.edit().putBoolean("dark_theme", darkTheme).apply()
+                        AcademicDayAppWidgetProvider.updateAllWidgets(this@MainActivity)
+                    }
+                )
             }
         }
     }
 }
 
 @Composable
-fun MainApp(viewModel: AcademicViewModel) {
+fun MainApp(
+    viewModel: AcademicViewModel,
+    isDarkTheme: Boolean,
+    onToggleTheme: () -> Unit
+) {
     val navController = rememberNavController()
     val navBackStackEntry by navController.currentBackStackEntryAsState()
     val currentRoute = navBackStackEntry?.destination?.route
 
     val disciplines by viewModel.disciplines.collectAsState()
+    val activities by viewModel.activities.collectAsState()
     val selectedActivity by viewModel.selectedActivity.collectAsState()
 
     var showAddActivityDialog by remember { mutableStateOf(false) }
@@ -79,7 +106,6 @@ fun MainApp(viewModel: AcademicViewModel) {
 
     val bottomNavItems = listOf(
         Screen.Dashboard,
-        Screen.Calendar,
         Screen.Disciplines,
         Screen.ImportDocument,
         Screen.WidgetStudio,
@@ -120,7 +146,7 @@ fun MainApp(viewModel: AcademicViewModel) {
                             label = {
                                 Text(
                                     text = screen.title,
-                                    fontSize = 10.sp,
+                                    fontSize = 11.sp,
                                     maxLines = 1,
                                     fontWeight = if (isSelected) androidx.compose.ui.text.font.FontWeight.Bold else androidx.compose.ui.text.font.FontWeight.Normal
                                 )
@@ -151,23 +177,13 @@ fun MainApp(viewModel: AcademicViewModel) {
             composable(Screen.Dashboard.route) {
                 DashboardScreen(
                     viewModel = viewModel,
+                    isDarkTheme = isDarkTheme,
+                    onToggleTheme = onToggleTheme,
                     onNavigateToImport = { navigateToTab(Screen.ImportDocument.route) },
-                    onNavigateToCalendar = { navigateToTab(Screen.Calendar.route) },
                     onNavigateToDisciplines = { navigateToTab(Screen.Disciplines.route) },
                     onNavigateToReminders = { navigateToTab(Screen.Reminders.route) },
                     onNavigateToWidget = { navigateToTab(Screen.WidgetStudio.route) },
                     onOpenAddActivity = {
-                        preselectedDisciplineIdForNewActivity = null
-                        activityToEdit = null
-                        showAddActivityDialog = true
-                    }
-                )
-            }
-
-            composable(Screen.Calendar.route) {
-                CalendarScreen(
-                    viewModel = viewModel,
-                    onAddActivity = {
                         preselectedDisciplineIdForNewActivity = null
                         activityToEdit = null
                         showAddActivityDialog = true
@@ -198,7 +214,7 @@ fun MainApp(viewModel: AcademicViewModel) {
                 DocumentImportScreen(
                     viewModel = viewModel,
                     onFinishedImport = {
-                        navigateToTab(Screen.Calendar.route)
+                        navigateToTab(Screen.Dashboard.route)
                     }
                 )
             }
@@ -206,6 +222,7 @@ fun MainApp(viewModel: AcademicViewModel) {
             composable(Screen.WidgetStudio.route) {
                 WidgetStudioScreen(
                     viewModel = viewModel,
+                    isDarkTheme = isDarkTheme,
                     onNavigateToHome = { navigateToTab(Screen.Dashboard.route) }
                 )
             }
@@ -224,19 +241,16 @@ fun MainApp(viewModel: AcademicViewModel) {
             discipline = disc,
             onDismiss = { viewModel.selectActivity(null) },
             onStatusChange = { newStatus -> viewModel.updateActivityStatus(selectedActivity!!.id, newStatus) },
+            onUpdate = { updated ->
+                viewModel.saveActivity(updated)
+                viewModel.selectActivity(updated)
+            },
             onEdit = {
                 activityToEdit = selectedActivity
                 viewModel.selectActivity(null)
                 showAddActivityDialog = true
             },
-            onDelete = {
-                viewModel.deleteActivity(selectedActivity!!.id)
-            },
-            onTestNotification = {
-                if (disc != null) {
-                    viewModel.triggerTestReminder(selectedActivity!!, disc, "Lembrete: Prova/Atividade em Breve")
-                }
-            }
+            onDelete = { viewModel.deleteActivity(selectedActivity!!.id) }
         )
     }
 
@@ -262,6 +276,8 @@ fun MainApp(viewModel: AcademicViewModel) {
     if (showAddDisciplineDialog) {
         AddEditDisciplineDialog(
             initialDiscipline = disciplineToEdit,
+            existingDisciplines = disciplines,
+            existingActivities = activities,
             onDismiss = {
                 showAddDisciplineDialog = false
                 disciplineToEdit = null

@@ -8,7 +8,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
-import androidx.compose.runtime.Composable
+import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -20,19 +20,25 @@ import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import com.example.data.model.AcademicActivity
 import com.example.data.model.ActivityStatus
+import com.example.data.model.ActivityType
 import com.example.data.model.Discipline
 import com.example.ui.components.*
 
 @Composable
+@OptIn(ExperimentalMaterial3Api::class)
 fun ActivityDetailDialog(
     activity: AcademicActivity,
     discipline: Discipline?,
     onDismiss: () -> Unit,
     onStatusChange: (ActivityStatus) -> Unit,
+    onUpdate: (AcademicActivity) -> Unit,
     onEdit: () -> Unit,
-    onDelete: () -> Unit,
-    onTestNotification: () -> Unit
+    onDelete: () -> Unit
 ) {
+    var showDatePicker by remember { mutableStateOf(false) }
+    var showGradeDialog by remember { mutableStateOf(false) }
+    var gradeText by remember(activity.id, activity.grade) { mutableStateOf(activity.grade?.toString() ?: "") }
+
     Dialog(
         onDismissRequest = onDismiss,
         properties = DialogProperties(usePlatformDefaultWidth = false)
@@ -100,7 +106,24 @@ fun ActivityDetailDialog(
                             Spacer(modifier = Modifier.width(16.dp))
                             Icon(Icons.Default.Schedule, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(18.dp))
                             Spacer(modifier = Modifier.width(8.dp))
-                            Text("Horário: ${activity.time}", fontSize = 14.sp, fontWeight = FontWeight.Medium)
+                            Text(
+                                "Horário: ${activity.time.ifBlank { "Não informado" }}",
+                                fontSize = 14.sp,
+                                fontWeight = FontWeight.Medium
+                            )
+                        }
+
+                        if (!activity.originalDate.isNullOrBlank() && activity.originalDate != activity.date) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Icon(Icons.Default.Update, contentDescription = null, tint = Color(0xFFB45309), modifier = Modifier.size(18.dp))
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text(
+                                    "Data alterada de ${isoToBrazilianDate(activity.originalDate)}",
+                                    fontSize = 12.sp,
+                                    color = Color(0xFFB45309),
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
                         }
 
                         if (!activity.dueDate.isNullOrBlank()) {
@@ -123,12 +146,56 @@ fun ActivityDetailDialog(
 
                 Spacer(modifier = Modifier.height(16.dp))
 
+                if (activity.activityType == ActivityType.PROVA) {
+                    Surface(
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(12.dp),
+                        color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.35f)
+                    ) {
+                        Column(modifier = Modifier.padding(12.dp)) {
+                            Text("Dados da prova", fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                            Spacer(modifier = Modifier.height(8.dp))
+                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                OutlinedButton(
+                                    onClick = { showDatePicker = true },
+                                    modifier = Modifier.weight(1f),
+                                    contentPadding = PaddingValues(horizontal = 8.dp)
+                                ) {
+                                    Icon(Icons.Default.EventRepeat, contentDescription = null, modifier = Modifier.size(16.dp))
+                                    Spacer(modifier = Modifier.width(4.dp))
+                                    Text("Alterar data", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                                }
+                                Button(
+                                    onClick = { showGradeDialog = true },
+                                    modifier = Modifier.weight(1f),
+                                    contentPadding = PaddingValues(horizontal = 8.dp)
+                                ) {
+                                    Icon(Icons.Default.Grade, contentDescription = null, modifier = Modifier.size(16.dp))
+                                    Spacer(modifier = Modifier.width(4.dp))
+                                    Text(activity.grade?.let { "Nota: ${formatGrade(it)}" } ?: "Lançar nota", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                                }
+                            }
+                        }
+                    }
+                    Spacer(modifier = Modifier.height(16.dp))
+                }
+
                 // Status Switcher
-                Text("Status da Atividade:", fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text(
+                    if (activity.activityType == ActivityType.AULA) "Registro da aula:" else "Status da Atividade:",
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
                 Spacer(modifier = Modifier.height(6.dp))
                 StatusSelector(
                     status = activity.status,
-                    onStatusChange = onStatusChange
+                    onStatusChange = onStatusChange,
+                    availableStatuses = if (activity.activityType == ActivityType.AULA) {
+                        listOf(ActivityStatus.FALTA, ActivityStatus.CANCELADA)
+                    } else {
+                        ActivityStatus.values().toList()
+                    }
                 )
 
                 if (activity.description.isNotBlank()) {
@@ -195,16 +262,6 @@ fun ActivityDetailDialog(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    OutlinedButton(
-                        onClick = onTestNotification,
-                        modifier = Modifier.weight(1f),
-                        shape = RoundedCornerShape(10.dp)
-                    ) {
-                        Icon(Icons.Default.NotificationsActive, contentDescription = null, modifier = Modifier.size(16.dp))
-                        Spacer(modifier = Modifier.width(4.dp))
-                        Text("Testar Notif.", fontSize = 12.sp)
-                    }
-
                     Button(
                         onClick = onEdit,
                         modifier = Modifier.weight(1f),
@@ -225,4 +282,83 @@ fun ActivityDetailDialog(
             }
         }
     }
+
+    if (showDatePicker) {
+        val initialMillis = remember(activity.date) {
+            runCatching {
+                val parts = activity.date.split("-")
+                java.util.Calendar.getInstance(java.util.TimeZone.getTimeZone("UTC")).apply {
+                    clear()
+                    set(parts[0].toInt(), parts[1].toInt() - 1, parts[2].toInt(), 12, 0, 0)
+                }.timeInMillis
+            }.getOrNull()
+        }
+        val datePickerState = rememberDatePickerState(initialSelectedDateMillis = initialMillis)
+        DatePickerDialog(
+            onDismissRequest = { showDatePicker = false },
+            confirmButton = {
+                TextButton(onClick = {
+                    datePickerState.selectedDateMillis?.let { millis ->
+                        val newDate = java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.US).apply {
+                            timeZone = java.util.TimeZone.getTimeZone("UTC")
+                        }.format(java.util.Date(millis))
+                        if (newDate != activity.date) {
+                            onUpdate(activity.copy(originalDate = activity.originalDate ?: activity.date, date = newDate))
+                        }
+                    }
+                    showDatePicker = false
+                }) { Text("Confirmar") }
+            },
+            dismissButton = { TextButton(onClick = { showDatePicker = false }) { Text("Cancelar") } }
+        ) {
+            DatePicker(state = datePickerState)
+        }
+    }
+
+    if (showGradeDialog) {
+        val parsedGrade = gradeText.replace(',', '.').toDoubleOrNull()
+        AlertDialog(
+            onDismissRequest = { showGradeDialog = false },
+            icon = { Icon(Icons.Default.Grade, contentDescription = null) },
+            title = { Text("Nota da prova") },
+            text = {
+                OutlinedTextField(
+                    value = gradeText,
+                    onValueChange = { value ->
+                        if (value.length <= 5 && value.all { it.isDigit() || it == ',' || it == '.' }) gradeText = value
+                    },
+                    label = { Text("Nota de 0 a 10") },
+                    singleLine = true,
+                    supportingText = {
+                        if (gradeText.isNotBlank() && (parsedGrade == null || parsedGrade !in 0.0..10.0)) {
+                            Text("Informe uma nota entre 0 e 10", color = MaterialTheme.colorScheme.error)
+                        }
+                    }
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    enabled = parsedGrade != null && parsedGrade in 0.0..10.0,
+                    onClick = {
+                        onUpdate(activity.copy(grade = parsedGrade))
+                        showGradeDialog = false
+                    }
+                ) { Text("Salvar nota") }
+            },
+            dismissButton = {
+                Row {
+                    if (activity.grade != null) {
+                        TextButton(onClick = {
+                            gradeText = ""
+                            onUpdate(activity.copy(grade = null))
+                            showGradeDialog = false
+                        }) { Text("Remover") }
+                    }
+                    TextButton(onClick = { showGradeDialog = false }) { Text("Cancelar") }
+                }
+            }
+        )
+    }
 }
+
+private fun formatGrade(value: Double): String = if (value % 1.0 == 0.0) value.toInt().toString() else String.format(java.util.Locale.getDefault(), "%.1f", value)

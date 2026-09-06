@@ -1,19 +1,19 @@
 package com.example.ui.viewmodel
 
 import android.app.Application
+import android.net.Uri
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.AcademicApp
 import com.example.ai.ExtractedEvent
 import com.example.ai.ExtractedSyllabus
-import com.example.ai.GeminiDocumentParser
 import com.example.data.model.AcademicActivity
 import com.example.data.model.AcademicDocument
 import com.example.data.model.ActivityStatus
 import com.example.data.model.ActivityType
 import com.example.data.model.Discipline
 import com.example.data.repository.DisciplineWithStats
-import com.example.notification.AcademicNotificationManager
+import com.example.data.repository.DocumentUpload
 import com.example.widget.WidgetPreferences
 import com.example.widget.WidgetSettings
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -23,6 +23,9 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 
 enum class CalendarViewMode(val title: String) {
     MONTH("Mensal"),
@@ -32,6 +35,14 @@ enum class CalendarViewMode(val title: String) {
 
 class AcademicViewModel(application: Application) : AndroidViewModel(application) {
     private val repository = (application as AcademicApp).repository
+    private val today = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).format(Date())
+    private val todayParts = today.split("-")
+
+    init {
+        viewModelScope.launch {
+            repository.ensureDistinctDisciplineColors()
+        }
+    }
 
     val disciplines: StateFlow<List<Discipline>> = repository.allDisciplines
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
@@ -43,10 +54,10 @@ class AcademicViewModel(application: Application) : AndroidViewModel(application
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
     // UI States
-    private val _currentDate = MutableStateFlow("2026-09-01")
+    private val _currentDate = MutableStateFlow(today)
     val currentDate: StateFlow<String> = _currentDate.asStateFlow()
 
-    private val _selectedDate = MutableStateFlow("2026-09-01")
+    private val _selectedDate = MutableStateFlow(today)
     val selectedDate: StateFlow<String> = _selectedDate.asStateFlow()
 
     private val _calendarViewMode = MutableStateFlow(CalendarViewMode.MONTH)
@@ -74,6 +85,9 @@ class AcademicViewModel(application: Application) : AndroidViewModel(application
     private val _importSuccessMessage = MutableStateFlow<String?>(null)
     val importSuccessMessage: StateFlow<String?> = _importSuccessMessage.asStateFlow()
 
+    private val _documentAnalysisError = MutableStateFlow<String?>(null)
+    val documentAnalysisError: StateFlow<String?> = _documentAnalysisError.asStateFlow()
+
     // Widget Settings
     private val _widgetSettings = MutableStateFlow(WidgetPreferences.getSettings(application))
     val widgetSettings: StateFlow<WidgetSettings> = _widgetSettings.asStateFlow()
@@ -89,13 +103,14 @@ class AcademicViewModel(application: Application) : AndroidViewModel(application
     val disciplineStats: StateFlow<List<DisciplineWithStats>> = combine(disciplines, activities) { discList, actList ->
         discList.map { disc ->
             val discActs = actList.filter { it.disciplineId == disc.id }
-            val completed = discActs.count { it.status == ActivityStatus.CONCLUIDA }
+            val countableActivities = discActs.filter { it.activityType != ActivityType.AULA }
+            val completed = countableActivities.count { it.status == ActivityStatus.CONCLUIDA }
             val nextAct = discActs
                 .filter { it.status != ActivityStatus.CONCLUIDA && it.date >= _currentDate.value }
                 .minByOrNull { "${it.date} ${it.time}" }
             DisciplineWithStats(
                 discipline = disc,
-                totalActivities = discActs.size,
+                totalActivities = countableActivities.size,
                 completedActivities = completed,
                 nextActivity = nextAct
             )
@@ -103,7 +118,9 @@ class AcademicViewModel(application: Application) : AndroidViewModel(application
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
     // Calendar navigation (Year, Month 1..12)
-    private val _calendarYearMonth = MutableStateFlow(Pair(2026, 9))
+    private val _calendarYearMonth = MutableStateFlow(
+        Pair(todayParts[0].toInt(), todayParts[1].toInt())
+    )
     val calendarYearMonth: StateFlow<Pair<Int, Int>> = _calendarYearMonth.asStateFlow()
 
     fun setCalendarYearMonth(year: Int, month: Int) {
@@ -129,8 +146,8 @@ class AcademicViewModel(application: Application) : AndroidViewModel(application
     }
 
     fun goToCurrentMonth() {
-        _calendarYearMonth.value = Pair(2026, 9)
-        _selectedDate.value = "2026-09-01"
+        _calendarYearMonth.value = Pair(todayParts[0].toInt(), todayParts[1].toInt())
+        _selectedDate.value = today
     }
 
     fun setSelectedDate(date: String) {
@@ -227,15 +244,26 @@ class AcademicViewModel(application: Application) : AndroidViewModel(application
         }
     }
 
-    fun analyzeDocument(text: String, fileName: String) {
+    fun analyzeDocuments(documents: List<DocumentUpload>) {
         viewModelScope.launch {
             _isAnalyzingDocument.value = true
             _importSuccessMessage.value = null
+            _documentAnalysisError.value = null
             try {
-                val extracted = GeminiDocumentParser.parseAcademicDocument(text, fileName)
-                _extractedSyllabus.value = extracted
+                _extractedSyllabus.value = repository.extractDocuments(documents)
             } catch (e: Exception) {
-                _extractedSyllabus.value = GeminiDocumentParser.smartLocalParser(text, fileName)
+                _documentAnalysisError.value = when (e) {
+                    is java.net.ConnectException -> "Não foi possível conectar ao serviço de análise. Verifique sua conexão e tente novamente."
+                    is java.net.SocketTimeoutException -> "O processamento demorou demais. Seus arquivos continuam selecionados; tente novamente."
+                    is retrofit2.HttpException -> when (e.code()) {
+                        429 -> "O limite temporário de análises foi atingido. Seus arquivos continuam selecionados; aguarde um pouco e tente novamente."
+                        503 -> "A inteligência artificial está temporariamente ocupada. Seus arquivos continuam selecionados; aguarde alguns instantes e tente novamente."
+                        413 -> "O arquivo excede o tamanho máximo permitido."
+                        415 -> "Um dos arquivos selecionados não está em um formato aceito."
+                        else -> "Não foi possível processar o documento. Verifique o arquivo e tente novamente."
+                    }
+                    else -> e.message ?: "Não foi possível analisar o documento."
+                }
             } finally {
                 _isAnalyzingDocument.value = false
             }
@@ -245,10 +273,11 @@ class AcademicViewModel(application: Application) : AndroidViewModel(application
     fun clearExtractedSyllabus() {
         _extractedSyllabus.value = null
         _importSuccessMessage.value = null
+        _documentAnalysisError.value = null
     }
 
-    fun confirmAndSaveImportedEvents(events: List<ExtractedEvent>) {
-        val syllabus = _extractedSyllabus.value ?: return
+    fun confirmAndSaveImportedEvents(syllabus: ExtractedSyllabus, events: List<ExtractedEvent>) {
+        if (_extractedSyllabus.value == null) return
         viewModelScope.launch {
             val discId = repository.saveImportedSyllabus(syllabus, events)
             _extractedSyllabus.value = null
@@ -268,7 +297,4 @@ class AcademicViewModel(application: Application) : AndroidViewModel(application
         com.example.widget.AcademicDayAppWidgetProvider.updateAllWidgets(getApplication())
     }
 
-    fun triggerTestReminder(activity: AcademicActivity, discipline: Discipline, reminderType: String = "Lembrete Automático") {
-        AcademicNotificationManager.sendTestReminder(getApplication(), activity, discipline, reminderType)
-    }
 }

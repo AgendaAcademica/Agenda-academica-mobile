@@ -18,7 +18,9 @@ import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -54,7 +56,9 @@ fun DisciplinesScreen(
             onDelete = { viewModel.deleteDiscipline(selectedDiscipline!!.id) },
             onAddActivity = { onOpenAddActivityForDiscipline(selectedDiscipline!!.id) },
             onActivityClick = { act -> viewModel.selectActivity(act) },
-            onStatusChange = { id, s -> viewModel.updateActivityStatus(id, s) }
+            onStatusChange = { id, s -> viewModel.updateActivityStatus(id, s) },
+            onGradeChange = { activity, grade -> viewModel.saveActivity(activity.copy(grade = grade)) },
+            onDateChange = { activity, date -> viewModel.saveActivity(activity.copy(originalDate = activity.originalDate ?: activity.date, date = date)) }
         )
     } else {
         LazyColumn(
@@ -239,8 +243,14 @@ fun DisciplineDetailView(
     onDelete: () -> Unit,
     onAddActivity: () -> Unit,
     onActivityClick: (AcademicActivity) -> Unit,
-    onStatusChange: (Long, ActivityStatus) -> Unit
+    onStatusChange: (Long, ActivityStatus) -> Unit,
+    onGradeChange: (AcademicActivity, Double?) -> Unit,
+    onDateChange: (AcademicActivity, String) -> Unit
 ) {
+    val context = LocalContext.current
+    val tutorialPreferences = remember {
+        context.getSharedPreferences("discipline_tutorial", android.content.Context.MODE_PRIVATE)
+    }
     val discColor = parseColorHex(discipline.colorHex)
     val exams = activities.filter { it.activityType == ActivityType.PROVA }
     val classes = activities.filter { it.activityType == ActivityType.AULA }
@@ -248,7 +258,36 @@ fun DisciplineDetailView(
 
     var selectedTab by remember { mutableStateOf(0) }
     var showDeleteConfirmation by remember { mutableStateOf(false) }
+    var showDisciplineTutorial by remember(discipline.id) {
+        mutableStateOf(!tutorialPreferences.getBoolean("completed", false))
+    }
+    var tutorialStep by remember(discipline.id) { mutableIntStateOf(0) }
     val tabTitles = listOf("Atividades (${assignments.size})", "Provas (${exams.size})", "Aulas (${classes.size})", "Documentos (${documents.size})")
+
+    LaunchedEffect(showDisciplineTutorial, tutorialStep) {
+        if (showDisciplineTutorial) {
+            selectedTab = when (tutorialStep) {
+                2 -> 1
+                3 -> 2
+                else -> 0
+            }
+        }
+    }
+
+    fun finishTutorial() {
+        tutorialPreferences.edit().putBoolean("completed", true).apply()
+        showDisciplineTutorial = false
+    }
+
+    if (showDisciplineTutorial) {
+        DisciplineTutorialDialog(
+            step = tutorialStep,
+            onPrevious = { tutorialStep = (tutorialStep - 1).coerceAtLeast(0) },
+            onNext = { tutorialStep = (tutorialStep + 1).coerceAtMost(DISCIPLINE_TUTORIAL_LAST_STEP) },
+            onDismiss = ::finishTutorial,
+            onFinish = ::finishTutorial
+        )
+    }
 
     if (showDeleteConfirmation) {
         AlertDialog(
@@ -314,6 +353,12 @@ fun DisciplineDetailView(
                         }
 
                         Row {
+                            IconButton(onClick = {
+                                tutorialStep = 0
+                                showDisciplineTutorial = true
+                            }) {
+                                Icon(Icons.Default.HelpOutline, contentDescription = "Abrir tutorial da disciplina", tint = Color.White)
+                            }
                             IconButton(onClick = onEdit) {
                                 Icon(Icons.Default.Edit, contentDescription = "Editar", tint = Color.White)
                             }
@@ -433,6 +478,8 @@ fun DisciplineDetailView(
                                 activity = act,
                                 discipline = discipline,
                                 onStatusChange = { onStatusChange(act.id, it) },
+                                onGradeChange = { grade -> onGradeChange(act, grade) },
+                                onDateChange = { date -> onDateChange(act, date) },
                                 onClick = { onActivityClick(act) }
                             )
                         }
@@ -440,6 +487,37 @@ fun DisciplineDetailView(
                 }
             }
             1 -> { // Exams
+                val gradedExams = exams.mapNotNull { it.grade }
+                val average = gradedExams.takeIf { it.isNotEmpty() }?.average()
+                item {
+                    Card(
+                        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp),
+                        shape = RoundedCornerShape(16.dp),
+                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.45f)),
+                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.35f))
+                    ) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth().padding(14.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Icon(Icons.Default.Calculate, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+                                Spacer(modifier = Modifier.width(10.dp))
+                                Column {
+                                    Text("Média das provas", fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                                    Text("${gradedExams.size} de ${exams.size} notas lançadas", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                }
+                            }
+                            Text(
+                                text = average?.let { String.format(java.util.Locale.getDefault(), "%.2f", it) } ?: "—",
+                                fontSize = 24.sp,
+                                fontWeight = FontWeight.ExtraBold,
+                                color = MaterialTheme.colorScheme.primary
+                            )
+                        }
+                    }
+                }
                 if (exams.isEmpty()) {
                     item {
                         Box(modifier = Modifier.fillMaxWidth().padding(32.dp), contentAlignment = Alignment.Center) {
@@ -453,6 +531,8 @@ fun DisciplineDetailView(
                                 activity = exam,
                                 discipline = discipline,
                                 onStatusChange = { onStatusChange(exam.id, it) },
+                                onGradeChange = { grade -> onGradeChange(exam, grade) },
+                                onDateChange = { date -> onDateChange(exam, date) },
                                 onClick = { onActivityClick(exam) }
                             )
                         }
@@ -720,6 +800,98 @@ fun DisciplineDetailView(
     }
 }
 
+private const val DISCIPLINE_TUTORIAL_LAST_STEP = 3
+
+@Composable
+private fun DisciplineTutorialDialog(
+    step: Int,
+    onPrevious: () -> Unit,
+    onNext: () -> Unit,
+    onDismiss: () -> Unit,
+    onFinish: () -> Unit
+) {
+    val (title, description, icon) = when (step) {
+        0 -> Triple(
+            "Cronograma da disciplina",
+            "Esta tela reúne tudo o que pertence à matéria. Use Adicionar Evento para criar uma atividade, prova ou outro compromisso já vinculado a esta disciplina.",
+            Icons.Default.AddTask
+        )
+        1 -> Triple(
+            "Atividades e trabalhos",
+            "Na aba Atividades você acompanha trabalhos, projetos e prazos. Use os botões dos cards para atualizar rapidamente cada compromisso.",
+            Icons.Default.Assignment
+        )
+        2 -> Triple(
+            "Provas e notas",
+            "Na aba Provas, toque em Lançar nota para registrar ou remover uma nota. A média é recalculada automaticamente conforme as notas informadas.",
+            Icons.Default.Calculate
+        )
+        else -> Triple(
+            "Aulas, frequência e faltas",
+            "Na aba Aulas você consulta a frequência. Marque falta ou aula cancelada diretamente no card; os totais e o percentual são atualizados automaticamente.",
+            Icons.Default.FactCheck
+        )
+    }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        icon = {
+            Surface(shape = CircleShape, color = MaterialTheme.colorScheme.primaryContainer) {
+                Icon(
+                    imageVector = icon,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.onPrimaryContainer,
+                    modifier = Modifier.padding(12.dp).size(28.dp)
+                )
+            }
+        },
+        title = {
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                Text(
+                    text = "Passo ${step + 1} de ${DISCIPLINE_TUTORIAL_LAST_STEP + 1}",
+                    color = MaterialTheme.colorScheme.primary,
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.Bold
+                )
+                Spacer(modifier = Modifier.height(6.dp))
+                Text(title, textAlign = TextAlign.Center)
+            }
+        },
+        text = {
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                LinearProgressIndicator(
+                    progress = { (step + 1f) / (DISCIPLINE_TUTORIAL_LAST_STEP + 1f) },
+                    modifier = Modifier.fillMaxWidth().height(4.dp)
+                )
+                Spacer(modifier = Modifier.height(16.dp))
+                Text(
+                    text = description,
+                    textAlign = TextAlign.Center,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    lineHeight = 20.sp
+                )
+            }
+        },
+        confirmButton = {
+            Button(onClick = if (step == DISCIPLINE_TUTORIAL_LAST_STEP) onFinish else onNext) {
+                Text(if (step == DISCIPLINE_TUTORIAL_LAST_STEP) "Concluir" else "Próximo")
+                if (step < DISCIPLINE_TUTORIAL_LAST_STEP) {
+                    Spacer(modifier = Modifier.width(4.dp))
+                    Icon(Icons.Default.ArrowForward, contentDescription = null, modifier = Modifier.size(16.dp))
+                }
+            }
+        },
+        dismissButton = {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                if (step > 0) TextButton(onClick = onPrevious) { Text("Voltar") }
+                TextButton(onClick = onDismiss) {
+                    Text(if (step == DISCIPLINE_TUTORIAL_LAST_STEP) "Fechar" else "Pular")
+                }
+            }
+        }
+    )
+}
+
 @Composable
 fun ClassAttendanceCard(
     activity: AcademicActivity,
@@ -778,15 +950,15 @@ fun ClassAttendanceCard(
                     )
                     Spacer(modifier = Modifier.width(8.dp))
                     Text(
-                        text = "$brDate • ${activity.time}",
+                        text = if (activity.time.isBlank()) "$brDate • Sem horário" else "$brDate • ${activity.time}",
                         fontSize = 13.sp,
                         fontWeight = FontWeight.Bold,
                         color = if (isCancelled) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.onSurface
                     )
                 }
 
-                // Attendance Status Badge
-                Surface(
+                // Exibe marcador somente quando existe uma ocorrência relevante.
+                if (isFalta || isCancelled) Surface(
                     shape = RoundedCornerShape(8.dp),
                     color = when {
                         isFalta -> Color(0xFFBA1A1A).copy(alpha = 0.15f)
@@ -799,16 +971,12 @@ fun ClassAttendanceCard(
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Icon(
-                            imageVector = when {
-                                isFalta -> Icons.Default.Cancel
-                                isCancelled -> Icons.Default.EventBusy
-                                else -> Icons.Default.Schedule
-                            },
+                            imageVector = if (isFalta) Icons.Default.Cancel else Icons.Default.EventBusy,
                             contentDescription = null,
                             tint = when {
                                 isFalta -> Color(0xFFBA1A1A)
                                 isCancelled -> Color(0xFF5F6368)
-                                else -> MaterialTheme.colorScheme.onSurfaceVariant
+                                else -> Color(0xFF5F6368)
                             },
                             modifier = Modifier.size(13.dp)
                         )
@@ -817,14 +985,14 @@ fun ClassAttendanceCard(
                             text = when {
                                 isFalta -> "FALTA"
                                 isCancelled -> "CANCELADA"
-                                else -> "AGENDADA"
+                                else -> "CANCELADA"
                             },
                             fontSize = 11.sp,
                             fontWeight = FontWeight.Bold,
                             color = when {
                                 isFalta -> Color(0xFFBA1A1A)
                                 isCancelled -> Color(0xFF5F6368)
-                                else -> MaterialTheme.colorScheme.onSurfaceVariant
+                                else -> Color(0xFF5F6368)
                             }
                         )
                     }

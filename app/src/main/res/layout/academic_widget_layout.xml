@@ -25,16 +25,6 @@
             android:textSize="14sp"
             android:textStyle="bold" />
 
-        <TextView
-            android:id="@+id/widget_count"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:background="@drawable/widget_badge_bg"
-            android:paddingHorizontal="6dp"
-            android:paddingVertical="2dp"
-            android:text="3 pendentes"
-            android:textColor="#93C5FD"
-            android:textSize="11sp" />
     </LinearLayout>
 
     <!-- Items Container -->
@@ -56,7 +46,7 @@
             android:orientation="horizontal"
             android:padding="6dp">
 
-            <View
+            <TextView
                 android:id="@+id/widget_item_1_color"
                 android:layout_width="4dp"
                 android:layout_height="24dp"
@@ -73,7 +63,7 @@
                     android:id="@+id/widget_item_1_subject_time"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:text="08:00 — Cálculo"
+                    android:text=""
                     android:textColor="#93C5FD"
                     android:textSize="11sp"
                     android:textStyle="bold" />
@@ -84,9 +74,30 @@
                     android:layout_height="wrap_content"
                     android:ellipsize="end"
                     android:maxLines="1"
-                    android:text="Aula — Limites e Derivadas"
+                    android:text=""
                     android:textColor="#FFFFFF"
                     android:textSize="12sp" />
+
+                <TextView
+                    android:id="@+id/widget_item_1_location"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:ellipsize="end"
+                    android:maxLines="1"
+                    android:textColor="#CBD5E1"
+                    android:textSize="10sp"
+                    android:visibility="gone" />
+
+                <TextView
+                    android:id="@+id/widget_item_1_deadline"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="2dp"
+                    android:text="Prazo hoje"
+                    android:textColor="#FCA5A5"
+                    android:textSize="9sp"
+                    android:textStyle="bold"
+                    android:visibility="gone" />
             </LinearLayout>
         </LinearLayout>
 
@@ -101,7 +112,7 @@
             android:orientation="horizontal"
             android:padding="6dp">
 
-            <View
+            <TextView
                 android:id="@+id/widget_item_2_color"
                 android:layout_width="4dp"
                 android:layout_height="24dp"
@@ -118,7 +129,7 @@
                     android:id="@+id/widget_item_2_subject_time"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:text="14:00 — Eng. de Software"
+                    android:text=""
                     android:textColor="#86EFAC"
                     android:textSize="11sp"
                     android:textStyle="bold" />
@@ -129,9 +140,30 @@
                     android:layout_height="wrap_content"
                     android:ellipsize="end"
                     android:maxLines="1"
-                    android:text="Entrega da Atividade 3"
+                    android:text=""
                     android:textColor="#FFFFFF"
                     android:textSize="12sp" />
+
+                <TextView
+                    android:id="@+id/widget_item_2_location"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:ellipsize="end"
+                    android:maxLines="1"
+                    android:textColor="#CBD5E1"
+                    android:textSize="10sp"
+                    android:visibility="gone" />
+
+                <TextView
+                    android:id="@+id/widget_item_2_deadline"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="2dp"
+                    android:text="Prazo hoje"
+                    android:textColor="#FCA5A5"
+                    android:textSize="9sp"
+                    android:textStyle="bold"
+                    android:visibility="gone" />
             </LinearLayout>
         </LinearLayout>
 
@@ -145,7 +177,7 @@
             android:orientation="horizontal"
             android:padding="6dp">
 
-            <View
+            <TextView
                 android:id="@+id/widget_item_3_color"
                 android:layout_width="4dp"
                 android:layout_height="24dp"
@@ -162,7 +194,7 @@
                     android:id="@+id/widget_item_3_subject_time"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:text="18:30 — Banco de Dados"
+                    android:text=""
                     android:textColor="#FDBA74"
                     android:textSize="11sp"
                     android:textStyle="bold" />
@@ -173,9 +205,160 @@
                     android:layout_height="wrap_content"
                     android:ellipsize="end"
                     android:maxLines="1"
-                    android:text="Aula — Normalização"
+                    android:text=""
                     android:textColor="#FFFFFF"
                     android:textSize="12sp" />
+
+                <TextView
+                    android:id="@+id/widget_item_3_location"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:ellipsize="end"
+                    android:maxLines="1"
+                    android:textColor="#CBD5E1"
+                    android:textSize="10sp"
+                    android:visibility="gone" />
+
+                <TextView
+                    android:id="@+id/widget_item_3_deadline"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="2dp"
+                    android:text="Prazo hoje"
+                    android:textColor="#FCA5A5"
+                    android:textSize="9sp"
+                    android:textStyle="bold"
+                    android:visibility="gone" />
+            </LinearLayout>
+        </LinearLayout>
+
+        <!-- Item 4 -->
+        <LinearLayout
+            android:id="@+id/widget_item_4"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="4dp"
+            android:background="@drawable/widget_item_bg"
+            android:gravity="center_vertical"
+            android:orientation="horizontal"
+            android:padding="6dp"
+            android:visibility="gone">
+
+            <TextView
+                android:id="@+id/widget_item_4_color"
+                android:layout_width="4dp"
+                android:layout_height="24dp"
+                android:layout_marginEnd="8dp"
+                android:background="#2563EB" />
+
+            <LinearLayout
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:orientation="vertical">
+
+                <TextView
+                    android:id="@+id/widget_item_4_subject_time"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:textColor="#93C5FD"
+                    android:textSize="11sp"
+                    android:textStyle="bold" />
+
+                <TextView
+                    android:id="@+id/widget_item_4_title"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:ellipsize="end"
+                    android:maxLines="1"
+                    android:textColor="#FFFFFF"
+                    android:textSize="12sp" />
+
+                <TextView
+                    android:id="@+id/widget_item_4_location"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:ellipsize="end"
+                    android:maxLines="1"
+                    android:textColor="#CBD5E1"
+                    android:textSize="10sp"
+                    android:visibility="gone" />
+
+                <TextView
+                    android:id="@+id/widget_item_4_deadline"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="2dp"
+                    android:text="Prazo hoje"
+                    android:textColor="#FCA5A5"
+                    android:textSize="9sp"
+                    android:textStyle="bold"
+                    android:visibility="gone" />
+            </LinearLayout>
+        </LinearLayout>
+
+        <!-- Item 5 -->
+        <LinearLayout
+            android:id="@+id/widget_item_5"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="4dp"
+            android:background="@drawable/widget_item_bg"
+            android:gravity="center_vertical"
+            android:orientation="horizontal"
+            android:padding="6dp"
+            android:visibility="gone">
+
+            <TextView
+                android:id="@+id/widget_item_5_color"
+                android:layout_width="4dp"
+                android:layout_height="24dp"
+                android:layout_marginEnd="8dp"
+                android:background="#2563EB" />
+
+            <LinearLayout
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:orientation="vertical">
+
+                <TextView
+                    android:id="@+id/widget_item_5_subject_time"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:textColor="#93C5FD"
+                    android:textSize="11sp"
+                    android:textStyle="bold" />
+
+                <TextView
+                    android:id="@+id/widget_item_5_title"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:ellipsize="end"
+                    android:maxLines="1"
+                    android:textColor="#FFFFFF"
+                    android:textSize="12sp" />
+
+                <TextView
+                    android:id="@+id/widget_item_5_location"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:ellipsize="end"
+                    android:maxLines="1"
+                    android:textColor="#CBD5E1"
+                    android:textSize="10sp"
+                    android:visibility="gone" />
+
+                <TextView
+                    android:id="@+id/widget_item_5_deadline"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="2dp"
+                    android:text="Prazo hoje"
+                    android:textColor="#FCA5A5"
+                    android:textSize="9sp"
+                    android:textStyle="bold"
+                    android:visibility="gone" />
             </LinearLayout>
         </LinearLayout>
 

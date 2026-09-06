@@ -1,5 +1,10 @@
 package com.example.ui.screens
 
+import android.Manifest
+import android.content.pm.PackageManager
+import android.os.Build
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -15,6 +20,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -24,19 +30,35 @@ import com.example.ui.components.ActivityTypeBadge
 import com.example.ui.components.DisciplineTag
 import com.example.ui.components.PriorityBadge
 import com.example.ui.viewmodel.AcademicViewModel
+import androidx.core.content.ContextCompat
 
 @Composable
 fun RemindersCenterScreen(
     viewModel: AcademicViewModel
 ) {
+    val context = LocalContext.current
     val disciplines by viewModel.disciplines.collectAsState()
     val activities by viewModel.activities.collectAsState()
     val disciplinesMap = disciplines.associateBy { it.id }
 
-    var testSentMessage by remember { mutableStateOf<String?>(null) }
+    val currentDate by viewModel.currentDate.collectAsState()
+    var notificationsAllowed by remember {
+        mutableStateOf(
+            Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU ||
+                ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED
+        )
+    }
+    val permissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        notificationsAllowed = granted
+    }
 
     val pendingReminders = activities
-        .filter { it.status != ActivityStatus.CONCLUIDA && it.remindersEnabled }
+        .filter {
+            it.activityType != ActivityType.AULA &&
+                it.status != ActivityStatus.CONCLUIDA &&
+                it.status != ActivityStatus.CANCELADA &&
+                it.remindersEnabled && it.date >= currentDate
+        }
         .sortedBy { "${it.date} ${it.time}" }
 
     LazyColumn(
@@ -89,6 +111,28 @@ fun RemindersCenterScreen(
         }
 
         // Notification Schedule Rules
+        if (!notificationsAllowed) {
+            item {
+                Card(
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer),
+                    shape = RoundedCornerShape(14.dp)
+                ) {
+                    Column(modifier = Modifier.padding(16.dp)) {
+                        Text("Notificações desativadas", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onErrorContainer)
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Text("Autorize as notificações para receber os lembretes agendados.", fontSize = 12.sp, color = MaterialTheme.colorScheme.onErrorContainer)
+                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                            Spacer(modifier = Modifier.height(8.dp))
+                            Button(onClick = { permissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS) }) {
+                                Text("Permitir notificações")
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Notification Schedule Rules
         item {
             Card(
                 shape = RoundedCornerShape(16.dp),
@@ -116,25 +160,22 @@ fun RemindersCenterScreen(
             }
         }
 
-        if (testSentMessage != null) {
-            item {
-                Card(
-                    modifier = Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(12.dp),
-                    colors = CardDefaults.cardColors(containerColor = Color(0xFFDCFCE7))
-                ) {
-                    Row(modifier = Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
-                        Icon(Icons.Default.Check, contentDescription = null, tint = Color(0xFF16A34A))
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Text(testSentMessage!!, color = Color(0xFF14532D), fontSize = 12.sp, fontWeight = FontWeight.Medium)
-                    }
-                }
-            }
-        }
-
         // Active Scheduled Reminders
         item {
             Text("Próximos Lembretes Agendados (${pendingReminders.size}):", fontWeight = FontWeight.Bold, fontSize = 16.sp)
+        }
+
+        if (pendingReminders.isEmpty()) {
+            item {
+                Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
+                    Text(
+                        "Nenhuma prova, atividade ou prazo futuro com lembretes ativos.",
+                        modifier = Modifier.fillMaxWidth().padding(20.dp),
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        fontSize = 13.sp
+                    )
+                }
+            }
         }
 
         items(pendingReminders) { act ->
@@ -166,29 +207,11 @@ fun RemindersCenterScreen(
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Icon(Icons.Default.CalendarToday, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(14.dp))
                         Spacer(modifier = Modifier.width(4.dp))
-                        Text("Data: ${act.date} às ${act.time}", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    }
-
-                    Spacer(modifier = Modifier.height(10.dp))
-
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.End
-                    ) {
-                        OutlinedButton(
-                            onClick = {
-                                if (disc != null) {
-                                    viewModel.triggerTestReminder(act, disc, "Lembrete: Faltam 3 dias")
-                                    testSentMessage = "Notificação disparada com sucesso para ${act.title}!"
-                                }
-                            },
-                            shape = RoundedCornerShape(8.dp),
-                            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp)
-                        ) {
-                            Icon(Icons.Default.Send, contentDescription = null, modifier = Modifier.size(14.dp))
-                            Spacer(modifier = Modifier.width(4.dp))
-                            Text("Enviar Teste Agora", fontSize = 11.sp)
-                        }
+                        Text(
+                            if (act.time.isBlank()) "Data: ${act.date} • Horário não informado" else "Data: ${act.date} às ${act.time}",
+                            fontSize = 12.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
                     }
                 }
             }

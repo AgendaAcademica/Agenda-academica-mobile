@@ -11,7 +11,6 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.CircleShape
@@ -32,20 +31,23 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.ai.ExtractedEvent
-import com.example.ai.SampleAcademicDocuments
-import com.example.ai.SampleDoc
+import com.example.ai.ExtractedSyllabus
 import com.example.data.model.AcademicDocument
 import com.example.data.model.ActivityType
 import com.example.data.model.Priority
+import com.example.data.repository.DocumentUpload
 import com.example.ui.components.*
 import com.example.ui.viewmodel.AcademicViewModel
-import java.io.BufferedReader
-import java.io.InputStreamReader
+import java.text.SimpleDateFormat
+import java.util.Calendar
+import java.util.Locale
 
 enum class DocumentImportTab(val title: String) {
     IMPORT("Importar"),
     HISTORY("Histórico")
 }
+
+private data class SelectedImportFile(val uri: Uri, val name: String, val mimeType: String, val size: Long?)
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -57,103 +59,86 @@ fun DocumentImportScreen(
     val isAnalyzing by viewModel.isAnalyzingDocument.collectAsState()
     val extractedSyllabus by viewModel.extractedSyllabus.collectAsState()
     val importSuccessMessage by viewModel.importSuccessMessage.collectAsState()
+    val documentAnalysisError by viewModel.documentAnalysisError.collectAsState()
     val documents by viewModel.documents.collectAsState()
     val disciplines by viewModel.disciplines.collectAsState()
 
     val disciplinesMap = remember(disciplines) { disciplines.associateBy { it.id } }
 
     var activeTab by remember { mutableStateOf(DocumentImportTab.IMPORT) }
-    var customDocumentText by remember { mutableStateOf("") }
-    var selectedSampleDoc by remember { mutableStateOf<SampleDoc?>(SampleAcademicDocuments.SAMPLES.first()) }
-    var documentFileName by remember { mutableStateOf("Plano_Ensino_Eng_Software_2026_2.pdf") }
+    var selectedFiles by remember { mutableStateOf<List<SelectedImportFile>>(emptyList()) }
 
     // Editable copy of events for review
     var editableEvents by remember { mutableStateOf<List<ExtractedEvent>>(emptyList()) }
+    var editableSyllabus by remember { mutableStateOf<ExtractedSyllabus?>(null) }
+    var editingEventIndex by remember { mutableStateOf<Int?>(null) }
 
     // State for viewing/deleting documents in history
     var documentToView by remember { mutableStateOf<AcademicDocument?>(null) }
     var documentToDelete by remember { mutableStateOf<AcademicDocument?>(null) }
 
-    // File Picker Launcher for PDFs and documents
-    val filePickerLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.GetContent()
-    ) { uri: Uri? ->
-        if (uri != null) {
-            try {
-                // Query file name
-                var displayName = "documento_academico.pdf"
-                context.contentResolver.query(uri, null, null, null, null)?.use { cursor ->
-                    if (cursor.moveToFirst()) {
-                        val nameIndex = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
-                        if (nameIndex != -1) {
-                            displayName = cursor.getString(nameIndex)
-                        }
-                    }
-                }
-                documentFileName = displayName
-
-                // Read file content text
-                val stringBuilder = java.lang.StringBuilder()
-                context.contentResolver.openInputStream(uri)?.use { inputStream ->
-                    BufferedReader(InputStreamReader(inputStream)).use { reader ->
-                        var line: String? = reader.readLine()
-                        while (line != null) {
-                            stringBuilder.append(line).append("\n")
-                            line = reader.readLine()
-                        }
-                    }
-                }
-
-                val content = stringBuilder.toString().trim()
-                if (content.isNotBlank()) {
-                    customDocumentText = content
-                } else {
-                    // Fallback for binary PDFs: provide contextual document template
-                    customDocumentText = """
-                        PLANO DE ENSINO / CRONOGRAMA ACADÊMICO
-                        DOCUMENTO: $displayName
-                        
-                        DISCIPLINA: ${displayName.substringBefore(".").replace("_", " ")}
-                        PERÍODO LETIVO: 2026/2
-                        
-                        CRONOGRAMA DE AULAS E AVALIAÇÕES:
-                        - 08/09/2026 08:00: Aula Inaugural e Apresentação do Cronograma
-                        - 22/09/2026 14:00: Prova 1 (P1) - Avaliação Teórica
-                        - 15/10/2026 23:59: Entrega do Trabalho Prático 1
-                        - 05/11/2026 14:00: Prova 2 (P2) - Avaliação Semestral
-                        - 24/11/2026 23:59: Entrega do Projeto Final
-                    """.trimIndent()
-                }
-                selectedSampleDoc = null
-            } catch (e: Exception) {
-                // In case reading fails, set filename and sample
-                customDocumentText = SampleAcademicDocuments.SAMPLES.first().content
+    fun readSelectedFile(uri: Uri): SelectedImportFile {
+        var displayName = "documento_academico"
+        var fileSize: Long? = null
+        context.contentResolver.query(uri, null, null, null, null)?.use { cursor ->
+            if (cursor.moveToFirst()) {
+                val nameIndex = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
+                if (nameIndex != -1) displayName = cursor.getString(nameIndex)
+                val sizeIndex = cursor.getColumnIndex(OpenableColumns.SIZE)
+                if (sizeIndex != -1 && !cursor.isNull(sizeIndex)) fileSize = cursor.getLong(sizeIndex)
             }
         }
+        return SelectedImportFile(uri, displayName, context.contentResolver.getType(uri) ?: "application/octet-stream", fileSize)
+    }
+
+    val pdfPickerLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocument()
+    ) { uri: Uri? ->
+        if (uri != null) {
+            selectedFiles = runCatching { listOf(readSelectedFile(uri)) }.getOrDefault(emptyList())
+        }
+    }
+
+    val imagePickerLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenMultipleDocuments()
+    ) { uris: List<Uri> ->
+        val added = uris.mapNotNull { uri -> runCatching { readSelectedFile(uri) }.getOrNull() }
+        selectedFiles = (selectedFiles + added).distinctBy { it.uri }.take(10)
     }
 
     LaunchedEffect(extractedSyllabus) {
-        if (extractedSyllabus != null) {
-            editableEvents = extractedSyllabus!!.events.map { it.copy() }
+        val extracted = extractedSyllabus
+        if (extracted != null) {
+            val events = extracted.events.map { it.copy() }
+            editableSyllabus = extracted.copy(
+                schedule = inferScheduleDaysFromClasses(extracted.schedule, events)
+            )
+            editableEvents = events
             activeTab = DocumentImportTab.IMPORT
+        } else {
+            editableSyllabus = null
+            editableEvents = emptyList()
+            editingEventIndex = null
         }
     }
 
-    LaunchedEffect(selectedSampleDoc) {
-        if (selectedSampleDoc != null) {
-            customDocumentText = selectedSampleDoc!!.content
-            documentFileName = selectedSampleDoc!!.fileName
-        }
+    LaunchedEffect(importSuccessMessage) {
+        if (importSuccessMessage != null) selectedFiles = emptyList()
     }
 
-    LazyColumn(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(MaterialTheme.colorScheme.background)
-            .testTag("document_import_screen"),
-        contentPadding = PaddingValues(16.dp),
-        verticalArrangement = Arrangement.spacedBy(16.dp)
-    ) {
+    Box(modifier = Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
+        LazyColumn(
+            modifier = Modifier
+                .fillMaxSize()
+                .testTag("document_import_screen"),
+            contentPadding = PaddingValues(
+                start = 16.dp,
+                top = 16.dp,
+                end = 16.dp,
+                bottom = if (extractedSyllabus != null) 104.dp else 16.dp
+            ),
+            verticalArrangement = Arrangement.spacedBy(16.dp)
+        ) {
         // Hero Header Banner
         item {
             Card(
@@ -195,7 +180,7 @@ fun DocumentImportScreen(
 
                         Spacer(modifier = Modifier.height(10.dp))
                         Text(
-                            text = "Envie planos de ensino, cronogramas de aulas, calendários e arquivos acadêmicos em PDF para organizar tudo automaticamente no seu calendário.",
+                            text = "Envie PDFs, fotos e capturas de tela com informações acadêmicas para organizar tudo automaticamente no seu calendário.",
                             color = Color.White.copy(alpha = 0.9f),
                             fontSize = 13.sp,
                             lineHeight = 18.sp
@@ -270,6 +255,21 @@ fun DocumentImportScreen(
             }
         }
 
+        if (documentAnalysisError != null) {
+            item {
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer)
+                ) {
+                    Text(
+                        text = documentAnalysisError!!,
+                        modifier = Modifier.padding(16.dp),
+                        color = MaterialTheme.colorScheme.onErrorContainer
+                    )
+                }
+            }
+        }
+
         // TAB 1: IMPORTAR DOCUMENTO
         if (activeTab == DocumentImportTab.IMPORT) {
             if (extractedSyllabus == null) {
@@ -294,73 +294,99 @@ fun DocumentImportScreen(
                             }
                             Spacer(modifier = Modifier.height(8.dp))
                             Text(
-                                text = "Selecione um arquivo PDF, TXT ou plano de ensino do seu aparelho para ler e sincronizar com o calendário.",
+                                text = "Escolha um PDF ou imagem. A IA identifica disciplinas, aulas e avaliações para você revisar antes de adicionar ao calendário.",
                                 fontSize = 12.sp,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
                             Spacer(modifier = Modifier.height(12.dp))
-                            Button(
-                                onClick = { filePickerLauncher.launch("*/*") },
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .testTag("btn_pick_file"),
-                                shape = RoundedCornerShape(12.dp),
-                                colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primaryContainer, contentColor = MaterialTheme.colorScheme.onPrimaryContainer)
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
                             ) {
-                                Icon(Icons.Default.UploadFile, contentDescription = null, modifier = Modifier.size(20.dp))
-                                Spacer(modifier = Modifier.width(8.dp))
-                                Text("Selecionar Arquivo PDF / TXT", fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                                Button(
+                                    onClick = { pdfPickerLauncher.launch(arrayOf("application/pdf")) },
+                                    modifier = Modifier.weight(1f).testTag("btn_pick_pdf"),
+                                    shape = RoundedCornerShape(12.dp),
+                                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 10.dp)
+                                ) {
+                                    Icon(Icons.Default.PictureAsPdf, contentDescription = null, modifier = Modifier.size(18.dp))
+                                    Spacer(modifier = Modifier.width(5.dp))
+                                    Text("PDF", fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                                }
+                                Button(
+                                    onClick = {
+                                        selectedFiles = emptyList()
+                                        imagePickerLauncher.launch(arrayOf("image/jpeg", "image/png", "image/webp"))
+                                    },
+                                    modifier = Modifier.weight(1f).testTag("btn_pick_images"),
+                                    shape = RoundedCornerShape(12.dp),
+                                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 10.dp)
+                                ) {
+                                    Icon(Icons.Default.Collections, contentDescription = null, modifier = Modifier.size(18.dp))
+                                    Spacer(modifier = Modifier.width(5.dp))
+                                    Text("Imagens", fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                                }
                             }
-                        }
-                    }
-                }
 
-                // Step 1: Pre-loaded syllabus templates
-                item {
-                    Text(
-                        text = "Ou escolha um dos modelos de planos de ensino:",
-                        fontSize = 14.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = MaterialTheme.colorScheme.onSurface
-                    )
-                }
-
-                item {
-                    LazyRow(
-                        horizontalArrangement = Arrangement.spacedBy(10.dp)
-                    ) {
-                        items(SampleAcademicDocuments.SAMPLES) { sample ->
-                            val isSelected = selectedSampleDoc?.id == sample.id
-                            val color = parseColorHex(sample.colorHex)
-
-                            Card(
-                                modifier = Modifier
-                                    .width(220.dp)
-                                    .clickable {
-                                        selectedSampleDoc = sample
-                                        customDocumentText = sample.content
-                                        documentFileName = sample.fileName
+                            AnimatedVisibility(visible = selectedFiles.isNotEmpty()) {
+                                Card(
+                                    modifier = Modifier.fillMaxWidth().padding(top = 12.dp).testTag("selected_documents_confirmation"),
+                                    shape = RoundedCornerShape(12.dp),
+                                    colors = CardDefaults.cardColors(containerColor = Color(0xFFDCFCE7)),
+                                    border = BorderStroke(1.dp, Color(0xFF86EFAC))
+                                ) {
+                                    Column(modifier = Modifier.padding(12.dp)) {
+                                        Row(verticalAlignment = Alignment.CenterVertically) {
+                                            Icon(Icons.Default.CheckCircle, contentDescription = null, tint = Color(0xFF16A34A), modifier = Modifier.size(24.dp))
+                                            Spacer(modifier = Modifier.width(8.dp))
+                                            Column {
+                                                Text(
+                                                    if (selectedFiles.size == 1) "Arquivo pronto para processar" else "${selectedFiles.size} imagens da mesma disciplina",
+                                                    color = Color(0xFF14532D),
+                                                    fontWeight = FontWeight.Bold,
+                                                    fontSize = 13.sp
+                                                )
+                                                if (selectedFiles.size > 1) {
+                                                    Text("As imagens serão analisadas em conjunto", color = Color(0xFF15803D), fontSize = 11.sp)
+                                                }
+                                            }
+                                        }
+                                        Spacer(modifier = Modifier.height(8.dp))
+                                        selectedFiles.forEachIndexed { index, file ->
+                                            Row(
+                                                modifier = Modifier.fillMaxWidth(),
+                                                verticalAlignment = Alignment.CenterVertically
+                                            ) {
+                                                Icon(
+                                                    if (file.mimeType.startsWith("image/")) Icons.Default.Image else Icons.Default.PictureAsPdf,
+                                                    contentDescription = null,
+                                                    tint = Color(0xFF166534),
+                                                    modifier = Modifier.size(18.dp)
+                                                )
+                                                Spacer(modifier = Modifier.width(7.dp))
+                                                Column(modifier = Modifier.weight(1f)) {
+                                                    Text(file.name, color = Color(0xFF166534), fontSize = 11.sp, maxLines = 1)
+                                                    file.size?.let { Text(formatFileSize(it), color = Color(0xFF15803D), fontSize = 10.sp) }
+                                                }
+                                                IconButton(
+                                                    onClick = { selectedFiles = selectedFiles.filterIndexed { itemIndex, _ -> itemIndex != index } },
+                                                    modifier = Modifier.size(32.dp)
+                                                ) {
+                                                    Icon(Icons.Default.Close, contentDescription = "Remover ${file.name}", tint = Color(0xFF166534), modifier = Modifier.size(17.dp))
+                                                }
+                                            }
+                                        }
+                                        if (selectedFiles.all { it.mimeType.startsWith("image/") } && selectedFiles.size < 10) {
+                                            TextButton(
+                                                onClick = { imagePickerLauncher.launch(arrayOf("image/jpeg", "image/png", "image/webp")) },
+                                                modifier = Modifier.fillMaxWidth()
+                                            ) {
+                                                Icon(Icons.Default.AddPhotoAlternate, contentDescription = null, modifier = Modifier.size(17.dp))
+                                                Spacer(modifier = Modifier.width(5.dp))
+                                                Text("Selecionar novamente (até 10 imagens)", fontSize = 11.sp)
+                                            }
+                                        }
                                     }
-                                    .testTag("sample_doc_${sample.id}"),
-                                shape = RoundedCornerShape(14.dp),
-                                colors = CardDefaults.cardColors(
-                                    containerColor = if (isSelected) color.copy(alpha = 0.12f) else MaterialTheme.colorScheme.surface
-                                ),
-                                border = BorderStroke(
-                                    width = if (isSelected) 2.dp else 1.dp,
-                                    color = if (isSelected) color else MaterialTheme.colorScheme.outlineVariant
-                                )
-                            ) {
-                                Column(modifier = Modifier.padding(12.dp)) {
-                                    Row(verticalAlignment = Alignment.CenterVertically) {
-                                        Icon(Icons.Default.PictureAsPdf, contentDescription = null, tint = Color(0xFFDC2626), modifier = Modifier.size(20.dp))
-                                        Spacer(modifier = Modifier.width(6.dp))
-                                        Text(sample.disciplineName, fontWeight = FontWeight.Bold, fontSize = 13.sp, color = color, maxLines = 1)
-                                    }
-                                    Spacer(modifier = Modifier.height(6.dp))
-                                    Text(sample.fileName, fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1)
-                                    Spacer(modifier = Modifier.height(4.dp))
-                                    Text(sample.schedule, fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurface, maxLines = 1)
                                 }
                             }
                         }
@@ -368,44 +394,37 @@ fun DocumentImportScreen(
                 }
 
                 item {
-                    OutlinedTextField(
-                        value = customDocumentText,
-                        onValueChange = {
-                            customDocumentText = it
-                            selectedSampleDoc = null
-                        },
-                        label = { Text("Conteúdo do Documento Acadêmico (Texto do PDF)") },
-                        placeholder = { Text("Cole aqui o plano de ensino, cronograma de aulas ou calendário...") },
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(180.dp)
-                            .testTag("input_document_text"),
-                        shape = RoundedCornerShape(14.dp)
-                    )
-                }
-
-                item {
-                    Button(
-                        onClick = {
-                            if (customDocumentText.isNotBlank()) {
-                                viewModel.analyzeDocument(customDocumentText, documentFileName)
+                    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                        Button(
+                            onClick = {
+                                viewModel.analyzeDocuments(
+                                    selectedFiles.map { DocumentUpload(it.uri, it.name, it.mimeType) }
+                                )
+                            },
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .testTag("btn_process_document"),
+                            enabled = selectedFiles.isNotEmpty() && !isAnalyzing,
+                            shape = RoundedCornerShape(14.dp),
+                            contentPadding = PaddingValues(16.dp)
+                        ) {
+                            if (isAnalyzing) {
+                                CircularProgressIndicator(modifier = Modifier.size(20.dp), color = Color.White, strokeWidth = 2.dp)
+                                Spacer(modifier = Modifier.width(10.dp))
+                                Text("Analisando com Inteligência Artificial...", fontWeight = FontWeight.Bold)
+                            } else {
+                                Icon(Icons.Default.AutoAwesome, contentDescription = null, modifier = Modifier.size(20.dp))
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text("Processar Documento e Extrair Eventos", fontWeight = FontWeight.Bold, fontSize = 15.sp)
                             }
-                        },
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .testTag("btn_process_document"),
-                        enabled = customDocumentText.isNotBlank() && !isAnalyzing,
-                        shape = RoundedCornerShape(14.dp),
-                        contentPadding = PaddingValues(16.dp)
-                    ) {
+                        }
                         if (isAnalyzing) {
-                            CircularProgressIndicator(modifier = Modifier.size(20.dp), color = Color.White, strokeWidth = 2.dp)
-                            Spacer(modifier = Modifier.width(10.dp))
-                            Text("Analisando com Inteligência Artificial...", fontWeight = FontWeight.Bold)
-                        } else {
-                            Icon(Icons.Default.AutoAwesome, contentDescription = null, modifier = Modifier.size(20.dp))
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Text("Processar Documento e Extrair Eventos", fontWeight = FontWeight.Bold, fontSize = 15.sp)
+                            LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+                            Text(
+                                "A leitura e organização do documento pode levar alguns minutos. Mantenha o aplicativo aberto.",
+                                fontSize = 12.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
                         }
                     }
                 }
@@ -413,7 +432,7 @@ fun DocumentImportScreen(
 
             // Step 2: Interactive Review of Extracted Information
             if (extractedSyllabus != null) {
-                val syllabus = extractedSyllabus!!
+                val syllabus = editableSyllabus ?: extractedSyllabus!!
                 val discColor = parseColorHex(syllabus.recommendedColorHex)
 
                 item {
@@ -447,24 +466,79 @@ fun DocumentImportScreen(
                                 Box(modifier = Modifier.size(10.dp).clip(CircleShape).background(discColor))
                                 Spacer(modifier = Modifier.width(8.dp))
                                 Text(
-                                    text = "Disciplina Identificada: ${syllabus.disciplineName}",
+                                    text = "Revise os dados da disciplina",
                                     fontWeight = FontWeight.Bold,
                                     fontSize = 16.sp,
                                     color = discColor
                                 )
                             }
 
+                            Spacer(modifier = Modifier.height(12.dp))
+                            OutlinedTextField(
+                                value = syllabus.disciplineName,
+                                onValueChange = { editableSyllabus = syllabus.copy(disciplineName = it) },
+                                label = { Text("Nome da disciplina *") },
+                                leadingIcon = { Icon(Icons.Default.MenuBook, contentDescription = null) },
+                                singleLine = true,
+                                modifier = Modifier.fillMaxWidth()
+                            )
                             Spacer(modifier = Modifier.height(8.dp))
-                            if (syllabus.professor.isNotBlank()) {
-                                Text("• Professor: ${syllabus.professor}", fontSize = 13.sp)
+                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                OutlinedTextField(
+                                    value = syllabus.disciplineCode,
+                                    onValueChange = { editableSyllabus = syllabus.copy(disciplineCode = it) },
+                                    label = { Text("Código") },
+                                    singleLine = true,
+                                    modifier = Modifier.weight(1f)
+                                )
+                                OutlinedTextField(
+                                    value = syllabus.term,
+                                    onValueChange = { editableSyllabus = syllabus.copy(term = it) },
+                                    label = { Text("Período") },
+                                    singleLine = true,
+                                    modifier = Modifier.weight(1f)
+                                )
                             }
-                            if (syllabus.schedule.isNotBlank()) {
-                                Text("• Horário das Aulas: ${syllabus.schedule}", fontSize = 13.sp)
+                            Spacer(modifier = Modifier.height(8.dp))
+                            OutlinedTextField(
+                                value = syllabus.professor,
+                                onValueChange = { editableSyllabus = syllabus.copy(professor = it) },
+                                label = { Text("Professor(a)") },
+                                leadingIcon = { Icon(Icons.Default.Person, contentDescription = null) },
+                                singleLine = true,
+                                modifier = Modifier.fillMaxWidth()
+                            )
+                            Spacer(modifier = Modifier.height(8.dp))
+                            OutlinedTextField(
+                                value = syllabus.classroom,
+                                onValueChange = { editableSyllabus = syllabus.copy(classroom = it) },
+                                label = { Text("Local / Sala") },
+                                leadingIcon = { Icon(Icons.Default.Place, contentDescription = null) },
+                                singleLine = true,
+                                modifier = Modifier.fillMaxWidth()
+                            )
+                            Spacer(modifier = Modifier.height(8.dp))
+                            ImportedScheduleEditor(
+                                schedule = syllabus.schedule,
+                                onScheduleChange = { schedule ->
+                                    editableSyllabus = syllabus.copy(schedule = schedule)
+                                }
+                            )
+                            val scheduleStartTime = Regex("\\b(?:[01]?\\d|2[0-3]):[0-5]\\d\\b")
+                                .find(syllabus.schedule)?.value?.padStart(5, '0')
+                            if (scheduleStartTime != null && editableEvents.isNotEmpty()) {
+                                Spacer(modifier = Modifier.height(8.dp))
+                                FilledTonalButton(
+                                    onClick = {
+                                        editableEvents = editableEvents.map { it.copy(time = scheduleStartTime) }
+                                    },
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    Icon(Icons.Default.Update, contentDescription = null, modifier = Modifier.size(17.dp))
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                    Text("Aplicar $scheduleStartTime a todos os eventos")
+                                }
                             }
-                            if (syllabus.classroom.isNotBlank()) {
-                                Text("• Local: ${syllabus.classroom}", fontSize = 13.sp)
-                            }
-                            Text("• Período Letivo: ${syllabus.term}", fontSize = 13.sp)
                         }
                     }
                 }
@@ -543,8 +617,15 @@ fun DocumentImportScreen(
                                 Row(verticalAlignment = Alignment.CenterVertically) {
                                     Icon(Icons.Default.CalendarToday, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(13.dp))
                                     Spacer(modifier = Modifier.width(4.dp))
-                                    Text("${event.date} às ${event.time}", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    Text(
+                                        if (event.time.isBlank()) "${formatImportDate(event.date)} • Horário não informado" else "${formatImportDate(event.date)} às ${event.time}",
+                                        fontSize = 12.sp,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
                                 }
+                            }
+                            IconButton(onClick = { editingEventIndex = index }) {
+                                Icon(Icons.Default.Edit, contentDescription = "Editar evento")
                             }
                         }
                     }
@@ -556,13 +637,13 @@ fun DocumentImportScreen(
                     Button(
                         onClick = {
                             if (selectedEvents.isNotEmpty()) {
-                                viewModel.confirmAndSaveImportedEvents(selectedEvents)
+                                viewModel.confirmAndSaveImportedEvents(syllabus, selectedEvents)
                             }
                         },
                         modifier = Modifier
                             .fillMaxWidth()
                             .testTag("btn_confirm_import"),
-                        enabled = selectedEvents.isNotEmpty(),
+                        enabled = selectedEvents.isNotEmpty() && syllabus.disciplineName.isNotBlank(),
                         shape = RoundedCornerShape(14.dp),
                         contentPadding = PaddingValues(16.dp)
                     ) {
@@ -642,7 +723,7 @@ fun DocumentImportScreen(
                             )
                             Spacer(modifier = Modifier.height(6.dp))
                             Text(
-                                text = "Quando você importar arquivos em PDF ou planos de ensino, o histórico completo ficará registrado aqui.",
+                                text = "Quando você importar PDFs ou imagens acadêmicas, o histórico completo ficará registrado aqui.",
                                 fontSize = 13.sp,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 textAlign = androidx.compose.ui.text.style.TextAlign.Center
@@ -792,6 +873,41 @@ fun DocumentImportScreen(
                     }
                 }
             }
+            }
+        }
+
+        val reviewSyllabus = editableSyllabus ?: extractedSyllabus
+        val selectedReviewEvents = editableEvents.filter { it.isSelected }
+        if (
+            activeTab == DocumentImportTab.IMPORT &&
+            reviewSyllabus != null &&
+            reviewSyllabus.disciplineName.isNotBlank() &&
+            selectedReviewEvents.isNotEmpty()
+        ) {
+            ExtendedFloatingActionButton(
+                onClick = { viewModel.confirmAndSaveImportedEvents(reviewSyllabus, selectedReviewEvents) },
+                modifier = Modifier
+                    .align(Alignment.BottomEnd)
+                    .padding(20.dp)
+                    .testTag("fab_confirm_import"),
+                icon = { Icon(Icons.Default.Save, contentDescription = null) },
+                text = { Text("Salvar ${selectedReviewEvents.size} eventos", fontWeight = FontWeight.Bold) }
+            )
+        }
+    }
+
+    editingEventIndex?.let { index ->
+        editableEvents.getOrNull(index)?.let { event ->
+            EditImportedEventDialog(
+                event = event,
+                onDismiss = { editingEventIndex = null },
+                onSave = { updated ->
+                    editableEvents = editableEvents.toMutableList().also { list ->
+                        if (index in list.indices) list[index] = updated
+                    }
+                    editingEventIndex = null
+                }
+            )
         }
     }
 
@@ -861,4 +977,275 @@ fun DocumentImportScreen(
             }
         )
     }
+}
+
+@Composable
+private fun EditImportedEventDialog(
+    event: ExtractedEvent,
+    onDismiss: () -> Unit,
+    onSave: (ExtractedEvent) -> Unit
+) {
+    var title by remember(event) { mutableStateOf(event.title) }
+    var date by remember(event) { mutableStateOf(formatImportDate(event.date)) }
+    var time by remember(event) { mutableStateOf(event.time) }
+    var description by remember(event) { mutableStateOf(event.description) }
+    val parsedDate = parseImportDate(date)
+    val validDate = parsedDate != null
+    val validTime = time.isBlank() || Regex("(?:[01]\\d|2[0-3]):[0-5]\\d").matches(time)
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        icon = { Icon(Icons.Default.EditCalendar, contentDescription = null) },
+        title = { Text("Editar evento importado") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedTextField(
+                    value = title,
+                    onValueChange = { title = it },
+                    label = { Text("Título *") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+                OutlinedTextField(
+                    value = date,
+                    onValueChange = { date = formatBrazilianDateInput(it) },
+                    label = { Text("Data *") },
+                    placeholder = { Text("DD/MM/AA") },
+                    supportingText = { if (date.isNotBlank() && !validDate) Text("Informe uma data válida no formato DD/MM/AA") },
+                    isError = date.isNotBlank() && !validDate,
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+                OutlinedTextField(
+                    value = time,
+                    onValueChange = { value ->
+                        if (value.length <= 5 && value.all { it.isDigit() || it == ':' }) time = value
+                    },
+                    label = { Text("Horário") },
+                    placeholder = { Text("HH:MM") },
+                    supportingText = { if (!validTime) Text("Use um horário entre 00:00 e 23:59") },
+                    isError = !validTime,
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+                OutlinedTextField(
+                    value = description,
+                    onValueChange = { description = it },
+                    label = { Text("Descrição") },
+                    minLines = 2,
+                    maxLines = 4,
+                    modifier = Modifier.fillMaxWidth()
+                )
+            }
+        },
+        confirmButton = {
+            Button(
+                enabled = title.isNotBlank() && validDate && validTime,
+                onClick = {
+                    onSave(event.copy(title = title.trim(), date = parsedDate!!, time = time, description = description.trim()))
+                }
+            ) { Text("Salvar alterações") }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancelar") } }
+    )
+}
+
+private data class ImportWeekDay(val shortName: String, val fullName: String)
+
+private val importWeekDays = listOf(
+    ImportWeekDay("SEG", "Segunda"),
+    ImportWeekDay("TER", "Terça"),
+    ImportWeekDay("QUA", "Quarta"),
+    ImportWeekDay("QUI", "Quinta"),
+    ImportWeekDay("SEX", "Sexta"),
+    ImportWeekDay("SÁB", "Sábado"),
+    ImportWeekDay("DOM", "Domingo")
+)
+
+internal fun formatImportDate(isoDate: String): String {
+    val input = SimpleDateFormat("yyyy-MM-dd", Locale.ROOT).apply { isLenient = false }
+    val output = SimpleDateFormat("dd/MM/yy", Locale.forLanguageTag("pt-BR"))
+    return runCatching { input.parse(isoDate)?.let(output::format) }.getOrNull() ?: isoDate
+}
+
+internal fun parseImportDate(brazilianDate: String): String? {
+    val parts = brazilianDate.split('/')
+    if (parts.size != 3 || parts[0].length != 2 || parts[1].length != 2 || parts[2].length != 2) return null
+    val day = parts[0].toIntOrNull() ?: return null
+    val month = parts[1].toIntOrNull() ?: return null
+    val year = parts[2].toIntOrNull()?.plus(2000) ?: return null
+    val canonical = String.format(Locale.ROOT, "%02d/%02d/%04d", day, month, year)
+    val parser = SimpleDateFormat("dd/MM/yyyy", Locale.forLanguageTag("pt-BR")).apply { isLenient = false }
+    val parsed = runCatching { parser.parse(canonical) }.getOrNull() ?: return null
+    return SimpleDateFormat("yyyy-MM-dd", Locale.ROOT).format(parsed)
+}
+
+internal fun formatBrazilianDateInput(value: String): String {
+    val digits = value.filter(Char::isDigit).take(6)
+    return buildString {
+        digits.forEachIndexed { index, digit ->
+            if (index == 2 || index == 4) append('/')
+            append(digit)
+        }
+    }
+}
+
+internal fun inferScheduleDaysFromClasses(
+    schedule: String,
+    events: List<ExtractedEvent>
+): String {
+    val classDates = events
+        .asSequence()
+        .filter { it.activityType == ActivityType.AULA }
+        .map { it.date }
+        .distinct()
+        .toList()
+    if (classDates.isEmpty()) return schedule
+
+    val formatter = SimpleDateFormat("yyyy-MM-dd", Locale.ROOT).apply { isLenient = false }
+    val calendar = Calendar.getInstance()
+    val inferredDays = classDates.mapNotNull { date ->
+        val parsed = runCatching { formatter.parse(date) }.getOrNull() ?: return@mapNotNull null
+        calendar.time = parsed
+        when (calendar.get(Calendar.DAY_OF_WEEK)) {
+            Calendar.MONDAY -> importWeekDays[0]
+            Calendar.TUESDAY -> importWeekDays[1]
+            Calendar.WEDNESDAY -> importWeekDays[2]
+            Calendar.THURSDAY -> importWeekDays[3]
+            Calendar.FRIDAY -> importWeekDays[4]
+            Calendar.SATURDAY -> importWeekDays[5]
+            Calendar.SUNDAY -> importWeekDays[6]
+            else -> null
+        }
+    }.distinct().sortedBy { importWeekDays.indexOf(it) }
+    if (inferredDays.isEmpty()) return schedule
+
+    val normalized = schedule.lowercase(Locale.ROOT)
+    val alreadyRepresented = inferredDays.filter { day ->
+        when (day.shortName) {
+            "SEG" -> normalized.contains("seg")
+            "TER" -> normalized.contains("ter")
+            "QUA" -> normalized.contains("qua")
+            "QUI" -> normalized.contains("qui")
+            "SEX" -> normalized.contains("sex")
+            "SÁB" -> normalized.contains("sáb") || normalized.contains("sab")
+            else -> normalized.contains("dom")
+        }
+    }.toSet()
+    val missingDays = inferredDays.filterNot { it in alreadyRepresented }
+    if (missingDays.isEmpty()) return schedule
+
+    val inferredText = missingDays.joinToString(" e ") { it.fullName }
+    return listOf(inferredText, schedule.trim()).filter { it.isNotBlank() }.joinToString(", ")
+}
+
+@Composable
+private fun ImportedScheduleEditor(
+    schedule: String,
+    onScheduleChange: (String) -> Unit
+) {
+    val context = LocalContext.current
+    val normalizedSchedule = schedule.lowercase()
+    val selectedDays = importWeekDays.filter { day ->
+        when (day.shortName) {
+            "SEG" -> normalizedSchedule.contains("seg")
+            "TER" -> normalizedSchedule.contains("ter")
+            "QUA" -> normalizedSchedule.contains("qua")
+            "QUI" -> normalizedSchedule.contains("qui")
+            "SEX" -> normalizedSchedule.contains("sex")
+            "SÁB" -> normalizedSchedule.contains("sáb") || normalizedSchedule.contains("sab")
+            else -> normalizedSchedule.contains("dom")
+        }
+    }
+    val times = Regex("\\b(?:[01]?\\d|2[0-3]):[0-5]\\d\\b")
+        .findAll(schedule).map { it.value.padStart(5, '0') }.toList()
+    val startTime = times.getOrNull(0).orEmpty()
+    val endTime = times.getOrNull(1).orEmpty()
+
+    fun rebuild(days: List<ImportWeekDay>, start: String, end: String): String {
+        val dayText = days.joinToString(" e ") { it.fullName }
+        val timeText = when {
+            start.isNotBlank() && end.isNotBlank() -> "$start - $end"
+            start.isNotBlank() -> start
+            else -> ""
+        }
+        return listOf(dayText, timeText).filter { it.isNotBlank() }.joinToString(", ")
+    }
+
+    fun openTimePicker(current: String, onSelected: (String) -> Unit) {
+        val parts = current.split(":")
+        val hour = parts.getOrNull(0)?.toIntOrNull() ?: 8
+        val minute = parts.getOrNull(1)?.toIntOrNull() ?: 0
+        android.app.TimePickerDialog(context, { _, selectedHour, selectedMinute ->
+            onSelected(String.format(Locale.getDefault(), "%02d:%02d", selectedHour, selectedMinute))
+        }, hour, minute, true).show()
+    }
+
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(14.dp))
+            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f))
+            .padding(12.dp)
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Icon(Icons.Default.Schedule, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+            Spacer(modifier = Modifier.width(7.dp))
+            Text("Dias e horários das aulas", fontWeight = FontWeight.Bold, fontSize = 14.sp)
+        }
+        Spacer(modifier = Modifier.height(10.dp))
+        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+            importWeekDays.forEach { day ->
+                val selected = day in selectedDays
+                Box(
+                    modifier = Modifier
+                        .weight(1f)
+                        .clip(RoundedCornerShape(9.dp))
+                        .background(if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surface)
+                        .border(1.dp, if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(9.dp))
+                        .clickable {
+                            val updatedDays = if (selected) selectedDays - day else (selectedDays + day).sortedBy { importWeekDays.indexOf(it) }
+                            onScheduleChange(rebuild(updatedDays, startTime, endTime))
+                        }
+                        .padding(vertical = 9.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(day.shortName, fontSize = 10.sp, fontWeight = FontWeight.Bold, color = if (selected) Color.White else MaterialTheme.colorScheme.onSurface)
+                }
+            }
+        }
+        Spacer(modifier = Modifier.height(10.dp))
+        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            listOf("Horário inicial" to startTime, "Horário final" to endTime).forEachIndexed { index, (label, value) ->
+                Box(modifier = Modifier.weight(1f)) {
+                    OutlinedTextField(
+                        value = value,
+                        onValueChange = {},
+                        readOnly = true,
+                        label = { Text(label, fontSize = 11.sp) },
+                        placeholder = { Text("--:--") },
+                        trailingIcon = { Icon(Icons.Default.AccessTime, contentDescription = "Selecionar $label") },
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(11.dp)
+                    )
+                    Box(
+                        modifier = Modifier.matchParentSize().clickable {
+                            openTimePicker(value) { selectedTime ->
+                                onScheduleChange(
+                                    if (index == 0) rebuild(selectedDays, selectedTime, endTime)
+                                    else rebuild(selectedDays, startTime, selectedTime)
+                                )
+                            }
+                        }
+                    )
+                }
+            }
+        }
+    }
+}
+
+private fun formatFileSize(bytes: Long): String = when {
+    bytes >= 1024L * 1024L -> String.format(java.util.Locale.getDefault(), "%.1f MB", bytes / (1024.0 * 1024.0))
+    bytes >= 1024L -> String.format(java.util.Locale.getDefault(), "%.1f KB", bytes / 1024.0)
+    else -> "$bytes B"
 }

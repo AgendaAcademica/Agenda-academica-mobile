@@ -165,6 +165,8 @@ fun CalendarScreen(
                 disciplinesMap = disciplinesMap,
                 onActivityClick = { act -> viewModel.selectActivity(act) },
                 onStatusChange = { id, s -> viewModel.updateActivityStatus(id, s) },
+                onGradeChange = { activity, grade -> viewModel.saveActivity(activity.copy(grade = grade)) },
+                onDateChange = { activity, date -> viewModel.saveActivity(activity.copy(originalDate = activity.originalDate ?: activity.date, date = date)) },
                 onAddActivity = onAddActivity
             )
             CalendarViewMode.WEEK -> WeeklyCalendarView(
@@ -175,7 +177,9 @@ fun CalendarScreen(
                 activities = filteredActivities,
                 disciplinesMap = disciplinesMap,
                 onActivityClick = { act -> viewModel.selectActivity(act) },
-                onStatusChange = { id, s -> viewModel.updateActivityStatus(id, s) }
+                onStatusChange = { id, s -> viewModel.updateActivityStatus(id, s) },
+                onGradeChange = { activity, grade -> viewModel.saveActivity(activity.copy(grade = grade)) },
+                onDateChange = { activity, date -> viewModel.saveActivity(activity.copy(originalDate = activity.originalDate ?: activity.date, date = date)) }
             )
             CalendarViewMode.DAY -> DailyTimelineView(
                 year = currentYear,
@@ -185,7 +189,9 @@ fun CalendarScreen(
                 activities = filteredActivities,
                 disciplinesMap = disciplinesMap,
                 onActivityClick = { act -> viewModel.selectActivity(act) },
-                onStatusChange = { id, s -> viewModel.updateActivityStatus(id, s) }
+                onStatusChange = { id, s -> viewModel.updateActivityStatus(id, s) },
+                onGradeChange = { activity, grade -> viewModel.saveActivity(activity.copy(grade = grade)) },
+                onDateChange = { activity, date -> viewModel.saveActivity(activity.copy(originalDate = activity.originalDate ?: activity.date, date = date)) }
             )
         }
     }
@@ -203,6 +209,8 @@ fun MonthlyCalendarView(
     disciplinesMap: Map<Long, Discipline>,
     onActivityClick: (AcademicActivity) -> Unit,
     onStatusChange: (Long, ActivityStatus) -> Unit,
+    onGradeChange: (AcademicActivity, Double?) -> Unit,
+    onDateChange: (AcademicActivity, String) -> Unit,
     onAddActivity: () -> Unit
 ) {
     val monthName = getBrazilianMonthName(month)
@@ -372,11 +380,13 @@ fun MonthlyCalendarView(
                                             val dayActs = activities.filter { it.date == dateString }
                                             val hasExams = dayActs.any {
                                                 it.activityType == ActivityType.PROVA ||
-                                                it.title.contains("prova", ignoreCase = true) ||
-                                                it.title.contains("avaliação", ignoreCase = true) ||
-                                                it.title.contains("avaliacao", ignoreCase = true) ||
-                                                it.title.contains("exame", ignoreCase = true) ||
-                                                it.title.contains("teste", ignoreCase = true)
+                                                (it.activityType != ActivityType.AULA && (
+                                                    it.title.contains("prova", ignoreCase = true) ||
+                                                    it.title.contains("avaliação", ignoreCase = true) ||
+                                                    it.title.contains("avaliacao", ignoreCase = true) ||
+                                                    it.title.contains("exame", ignoreCase = true) ||
+                                                    it.title.contains("teste", ignoreCase = true)
+                                                ))
                                             }
                                             val hasOnlyClasses = dayActs.isNotEmpty() && dayActs.all { it.activityType == ActivityType.AULA }
 
@@ -552,6 +562,8 @@ fun MonthlyCalendarView(
                     activity = act,
                     discipline = disc,
                     onStatusChange = { newStatus -> onStatusChange(act.id, newStatus) },
+                    onGradeChange = { grade -> onGradeChange(act, grade) },
+                    onDateChange = { date -> onDateChange(act, date) },
                     onClick = { onActivityClick(act) }
                 )
             }
@@ -568,7 +580,9 @@ fun WeeklyCalendarView(
     activities: List<AcademicActivity>,
     disciplinesMap: Map<Long, Discipline>,
     onActivityClick: (AcademicActivity) -> Unit,
-    onStatusChange: (Long, ActivityStatus) -> Unit
+    onStatusChange: (Long, ActivityStatus) -> Unit,
+    onGradeChange: (AcademicActivity, Double?) -> Unit,
+    onDateChange: (AcademicActivity, String) -> Unit
 ) {
     // Generate the 7 days of the week containing selectedDate
     val weekDays = remember(selectedDate) {
@@ -653,6 +667,8 @@ fun WeeklyCalendarView(
                                         activity = act,
                                         discipline = disc,
                                         onStatusChange = { onStatusChange(act.id, it) },
+                                        onGradeChange = { grade -> onGradeChange(act, grade) },
+                                        onDateChange = { date -> onDateChange(act, date) },
                                         onClick = { onActivityClick(act) }
                                     )
                                 }
@@ -674,7 +690,9 @@ fun DailyTimelineView(
     activities: List<AcademicActivity>,
     disciplinesMap: Map<Long, Discipline>,
     onActivityClick: (AcademicActivity) -> Unit,
-    onStatusChange: (Long, ActivityStatus) -> Unit
+    onStatusChange: (Long, ActivityStatus) -> Unit,
+    onGradeChange: (AcademicActivity, Double?) -> Unit,
+    onDateChange: (AcademicActivity, String) -> Unit
 ) {
     val cal = remember(year, month) {
         Calendar.getInstance().apply {
@@ -760,6 +778,8 @@ fun DailyTimelineView(
                         activity = act,
                         discipline = disc,
                         onStatusChange = { onStatusChange(act.id, it) },
+                        onGradeChange = { grade -> onGradeChange(act, grade) },
+                        onDateChange = { date -> onDateChange(act, date) },
                         onClick = { onActivityClick(act) }
                     )
                 }
@@ -767,4 +787,3 @@ fun DailyTimelineView(
         }
     }
 }
-

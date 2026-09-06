@@ -37,6 +37,7 @@ import com.example.widget.WidgetSettings
 @Composable
 fun WidgetStudioScreen(
     viewModel: AcademicViewModel,
+    isDarkTheme: Boolean,
     onNavigateToHome: () -> Unit = {}
 ) {
     val context = LocalContext.current
@@ -56,6 +57,12 @@ fun WidgetStudioScreen(
 
     var appliedNotification by remember { mutableStateOf(false) }
     var showPinInstructionsDialog by remember { mutableStateOf(false) }
+
+    val widgetBackground = if (isDarkTheme) Color(0xFF0F172A) else Color(0xFFF8FAFC)
+    val widgetBorder = if (isDarkTheme) Color(0xFF334155) else Color(0xFFCBD5E1)
+    val widgetItemBackground = if (isDarkTheme) Color(0xFF1E293B) else Color.White
+    val widgetPrimaryText = if (isDarkTheme) Color.White else Color(0xFF0F172A)
+    val widgetSecondaryText = if (isDarkTheme) Color(0xFF94A3B8) else Color(0xFF475569)
 
     // Filter preview activities
     var previewActivities = activities.filter { it.date == currentDate || it.dueDate == currentDate }
@@ -240,8 +247,8 @@ fun WidgetStudioScreen(
             Card(
                 modifier = Modifier.fillMaxWidth(),
                 shape = RoundedCornerShape(20.dp),
-                colors = CardDefaults.cardColors(containerColor = Color(0xFF0F172A)),
-                border = androidx.compose.foundation.BorderStroke(1.5.dp, Color(0xFF334155)),
+                colors = CardDefaults.cardColors(containerColor = widgetBackground),
+                border = androidx.compose.foundation.BorderStroke(1.5.dp, widgetBorder),
                 elevation = CardDefaults.cardElevation(defaultElevation = 8.dp)
             ) {
                 Column(modifier = Modifier.padding(16.dp)) {
@@ -263,23 +270,11 @@ fun WidgetStudioScreen(
                             }
                             Spacer(modifier = Modifier.width(8.dp))
                             Column {
-                                Text("Hoje — 01 de setembro", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 14.sp)
-                                Text("Agenda Acadêmica", color = Color(0xFF94A3B8), fontSize = 10.sp)
+                                Text("Hoje — 01 de setembro", color = widgetPrimaryText, fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                                Text("Agenda Acadêmica", color = widgetSecondaryText, fontSize = 10.sp)
                             }
                         }
 
-                        Surface(
-                            color = Color(0xFF1E293B),
-                            shape = RoundedCornerShape(6.dp)
-                        ) {
-                            Text(
-                                text = "${previewActivities.count { it.status != ActivityStatus.CONCLUIDA }} pendentes",
-                                color = Color(0xFFFDBA74),
-                                fontSize = 11.sp,
-                                fontWeight = FontWeight.SemiBold,
-                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
-                            )
-                        }
                     }
 
                     Spacer(modifier = Modifier.height(14.dp))
@@ -292,7 +287,7 @@ fun WidgetStudioScreen(
                                 .padding(vertical = 16.dp),
                             contentAlignment = Alignment.Center
                         ) {
-                            Text("Sem atividades programadas para hoje.", color = Color(0xFF94A3B8), fontSize = 12.sp)
+                            Text("Sem atividades programadas para hoje.", color = widgetSecondaryText, fontSize = 12.sp)
                         }
                     } else {
                         Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -301,7 +296,7 @@ fun WidgetStudioScreen(
                                 val discColor = parseColorHex(disc?.colorHex ?: "#2563EB")
 
                                 Surface(
-                                    color = Color(0xFF1E293B),
+                                    color = widgetItemBackground,
                                     shape = RoundedCornerShape(10.dp),
                                     modifier = Modifier.fillMaxWidth()
                                 ) {
@@ -320,7 +315,7 @@ fun WidgetStudioScreen(
                                         Spacer(modifier = Modifier.width(10.dp))
 
                                         Column(modifier = Modifier.weight(1f)) {
-                                            val timePrefix = if (showTimes) "${act.time} — " else ""
+                                            val timePrefix = if (showTimes && act.time.isNotBlank()) "${act.time} — " else ""
                                             Text(
                                                 text = "$timePrefix${disc?.name ?: "Geral"}",
                                                 color = discColor,
@@ -329,11 +324,19 @@ fun WidgetStudioScreen(
                                             )
                                             Text(
                                                 text = "${act.activityType.displayName}: ${act.title}",
-                                                color = Color.White,
+                                                color = widgetPrimaryText,
                                                 fontSize = 13.sp,
                                                 fontWeight = FontWeight.Medium,
                                                 maxLines = 1
                                             )
+                                            if (!disc?.classroom.isNullOrBlank()) {
+                                                Text(
+                                                    text = "📍 ${disc?.classroom}",
+                                                    color = widgetSecondaryText,
+                                                    fontSize = 10.sp,
+                                                    maxLines = 1
+                                                )
+                                            }
                                         }
 
                                         if (showDeadlines && act.dueDate != null) {
@@ -343,7 +346,7 @@ fun WidgetStudioScreen(
                                             ) {
                                                 Text(
                                                     text = "Prazo Hoje",
-                                                    color = Color(0xFFFCA5A5),
+                                                    color = if (isDarkTheme) Color(0xFFFCA5A5) else Color(0xFFB91C1C),
                                                     fontSize = 10.sp,
                                                     fontWeight = FontWeight.Bold,
                                                     modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
@@ -504,7 +507,6 @@ fun WidgetStudioScreen(
                                 selectedDisciplineIds = selectedDisciplineIds
                             )
                         )
-                        AcademicDayAppWidgetProvider.updateAllWidgets(context)
                         appliedNotification = true
                     },
                     modifier = Modifier.fillMaxWidth(),

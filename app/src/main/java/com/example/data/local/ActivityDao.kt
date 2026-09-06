@@ -44,6 +44,21 @@ interface ActivityDao {
     @Query("DELETE FROM activities WHERE id = :id")
     suspend fun deleteActivityById(id: Long)
 
+    @Query("SELECT * FROM activities WHERE disciplineId = :disciplineId AND activityType = 'AULA' AND sourceDocument = :source ORDER BY date ASC, time ASC, id ASC")
+    suspend fun getGeneratedClasses(disciplineId: Long, source: String = "Horário das Aulas"): List<AcademicActivity>
+
+    @Query("DELETE FROM activities WHERE id IN (:ids)")
+    suspend fun deleteActivitiesByIds(ids: List<Long>)
+
+    @Query("DELETE FROM activities WHERE disciplineId = :disciplineId AND activityType = 'AULA' AND sourceDocument = :source")
+    suspend fun deleteGeneratedClasses(disciplineId: Long, source: String = "Horário das Aulas")
+
+    @Query("UPDATE activities SET time = :time WHERE disciplineId = :disciplineId")
+    suspend fun updateDisciplineActivityTimes(disciplineId: Long, time: String)
+
+    @Query("SELECT COUNT(*) FROM activities WHERE disciplineId = :disciplineId AND activityType = 'AULA'")
+    suspend fun countClassesByDiscipline(disciplineId: Long): Int
+
     @Query("SELECT COUNT(*) FROM activities WHERE disciplineId = :disciplineId")
     suspend fun countByDiscipline(disciplineId: Long): Int
 

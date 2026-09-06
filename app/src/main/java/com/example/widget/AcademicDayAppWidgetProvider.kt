@@ -6,12 +6,14 @@ import android.appwidget.AppWidgetProvider
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
+import android.content.res.Configuration
 import android.graphics.Color
 import android.view.View
 import android.widget.RemoteViews
 import com.example.MainActivity
 import com.example.R
 import com.example.data.local.AppDatabase
+import com.example.data.model.AcademicActivity
 import com.example.data.model.ActivityStatus
 import com.example.data.model.ActivityType
 import kotlinx.coroutines.CoroutineScope
@@ -22,143 +24,169 @@ import kotlinx.coroutines.launch
 class AcademicDayAppWidgetProvider : AppWidgetProvider() {
 
     override fun onUpdate(context: Context, appWidgetManager: AppWidgetManager, appWidgetIds: IntArray) {
-        for (appWidgetId in appWidgetIds) {
-            updateAppWidget(context, appWidgetManager, appWidgetId)
+        val pendingResult = goAsync()
+        CoroutineScope(Dispatchers.IO).launch {
+            try {
+                appWidgetIds.forEach { appWidgetId ->
+                    updateAppWidgetNow(context, appWidgetManager, appWidgetId)
+                }
+            } finally {
+                pendingResult.finish()
+            }
         }
     }
 
     companion object {
+        private val itemContainers = intArrayOf(R.id.widget_item_1, R.id.widget_item_2, R.id.widget_item_3, R.id.widget_item_4, R.id.widget_item_5)
+        private val itemColors = intArrayOf(R.id.widget_item_1_color, R.id.widget_item_2_color, R.id.widget_item_3_color, R.id.widget_item_4_color, R.id.widget_item_5_color)
+        private val itemSubjects = intArrayOf(R.id.widget_item_1_subject_time, R.id.widget_item_2_subject_time, R.id.widget_item_3_subject_time, R.id.widget_item_4_subject_time, R.id.widget_item_5_subject_time)
+        private val itemTitles = intArrayOf(R.id.widget_item_1_title, R.id.widget_item_2_title, R.id.widget_item_3_title, R.id.widget_item_4_title, R.id.widget_item_5_title)
+        private val itemLocations = intArrayOf(R.id.widget_item_1_location, R.id.widget_item_2_location, R.id.widget_item_3_location, R.id.widget_item_4_location, R.id.widget_item_5_location)
+        private val itemDeadlines = intArrayOf(R.id.widget_item_1_deadline, R.id.widget_item_2_deadline, R.id.widget_item_3_deadline, R.id.widget_item_4_deadline, R.id.widget_item_5_deadline)
+
+        private data class WidgetPalette(
+            val background: Int,
+            val itemBackground: Int,
+            val primaryText: Int,
+            val secondaryText: Int,
+            val deadlineText: Int
+        )
+
         fun updateAllWidgets(context: Context) {
-            val appWidgetManager = AppWidgetManager.getInstance(context)
-            val thisWidget = ComponentName(context, AcademicDayAppWidgetProvider::class.java)
-            val appWidgetIds = appWidgetManager.getAppWidgetIds(thisWidget)
-            for (appWidgetId in appWidgetIds) {
-                updateAppWidget(context, appWidgetManager, appWidgetId)
+            val applicationContext = context.applicationContext
+            CoroutineScope(Dispatchers.IO).launch {
+                val manager = AppWidgetManager.getInstance(applicationContext)
+                val provider = ComponentName(applicationContext, AcademicDayAppWidgetProvider::class.java)
+                manager.getAppWidgetIds(provider).forEach { appWidgetId ->
+                    updateAppWidgetNow(applicationContext, manager, appWidgetId)
+                }
             }
         }
 
-        fun updateAppWidget(context: Context, appWidgetManager: AppWidgetManager, appWidgetId: Int) {
+        private suspend fun updateAppWidgetNow(context: Context, appWidgetManager: AppWidgetManager, appWidgetId: Int) {
             val views = RemoteViews(context.packageName, R.layout.academic_widget_layout)
-
-            // Setup click to open main app directly on home screen
-            val intent = Intent(context, MainActivity::class.java).apply {
-                flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
-            }
-            val pendingIntent = PendingIntent.getActivity(
+            val palette = getPalette(context)
+            applyTheme(views, palette)
+            val openAppIntent = PendingIntent.getActivity(
                 context,
                 0,
-                intent,
+                Intent(context, MainActivity::class.java).apply {
+                    flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
+                },
                 PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
             )
-            views.setOnClickPendingIntent(R.id.widget_root, pendingIntent)
-            views.setOnClickPendingIntent(R.id.widget_item_1, pendingIntent)
-            views.setOnClickPendingIntent(R.id.widget_item_2, pendingIntent)
-            views.setOnClickPendingIntent(R.id.widget_item_3, pendingIntent)
+            views.setOnClickPendingIntent(R.id.widget_root, openAppIntent)
+            itemContainers.forEach { views.setOnClickPendingIntent(it, openAppIntent) }
 
-            val currentDateStr = runCatching {
-                java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.getDefault()).format(java.util.Date())
-            }.getOrDefault("2026-09-01")
-
-            val headerDisplayDate = runCatching {
-                val cal = java.util.Calendar.getInstance()
-                val day = cal.get(java.util.Calendar.DAY_OF_MONTH)
+            try {
+                val today = java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.getDefault()).format(java.util.Date())
+                val calendar = java.util.Calendar.getInstance()
                 val monthNames = arrayOf(
                     "janeiro", "fevereiro", "março", "abril", "maio", "junho",
                     "julho", "agosto", "setembro", "outubro", "novembro", "dezembro"
                 )
-                val month = monthNames[cal.get(java.util.Calendar.MONTH)]
-                "Hoje — ${String.format("%02d", day)} de $month"
-            }.getOrDefault("Hoje — Agenda Acadêmica")
+                val header = "Hoje — ${String.format("%02d", calendar.get(java.util.Calendar.DAY_OF_MONTH))} de ${monthNames[calendar.get(java.util.Calendar.MONTH)]}"
 
-            CoroutineScope(Dispatchers.IO).launch {
-                try {
-                    val db = AppDatabase.getDatabase(context)
-                    val settings = WidgetPreferences.getSettings(context)
-                    val allDisciplines = db.disciplineDao().getAllDisciplines().first().associateBy { it.id }
-                    var activities = db.activityDao().getAllActivities().first()
+                val database = AppDatabase.getDatabase(context)
+                val settings = WidgetPreferences.getSettings(context)
+                val disciplines = database.disciplineDao().getAllDisciplines().first().associateBy { it.id }
+                var activities = database.activityDao().getAllActivities().first()
+                    .filter { it.date == today || it.dueDate == today }
 
-                    // Filter for today or upcoming
-                    var todayActivities = activities.filter { act ->
-                        act.date == currentDateStr || act.dueDate == currentDateStr
-                    }
-                    if (todayActivities.isEmpty()) {
-                        // Fallback to active semester date if today has none
-                        todayActivities = activities.filter { act ->
-                            act.date == "2026-09-01" || act.dueDate == "2026-09-01"
-                        }
-                    }
-
-                    // Apply widget settings
-                    if (settings.showOnlyPending) {
-                        todayActivities = todayActivities.filter { it.status != ActivityStatus.CONCLUIDA }
-                    }
-                    if (!settings.showClasses) {
-                        todayActivities = todayActivities.filter { it.activityType != ActivityType.AULA }
-                    }
-                    if (settings.selectedDisciplineIds.isNotEmpty()) {
-                        todayActivities = todayActivities.filter { settings.selectedDisciplineIds.contains(it.disciplineId) }
-                    }
-
-                    val pendingCount = todayActivities.count { it.status != ActivityStatus.CONCLUIDA }
-                    views.setTextViewText(R.id.widget_title, headerDisplayDate)
-                    views.setTextViewText(R.id.widget_count, "$pendingCount pendentes")
-
-                    // Populate slot 1
-                    val item1 = todayActivities.getOrNull(0)
-                    if (item1 != null) {
-                        views.setViewVisibility(R.id.widget_item_1, View.VISIBLE)
-                        val disc = allDisciplines[item1.disciplineId]
-                        val discName = disc?.name ?: "Geral"
-                        val discColor = runCatching { Color.parseColor(disc?.colorHex ?: "#2563EB") }.getOrDefault(Color.BLUE)
-
-                        val timePrefix = if (settings.showTimes) "${item1.time} — " else ""
-                        views.setTextViewText(R.id.widget_item_1_subject_time, "$timePrefix$discName")
-                        views.setTextColor(R.id.widget_item_1_subject_time, discColor)
-                        views.setTextViewText(R.id.widget_item_1_title, "${item1.activityType.displayName}: ${item1.title}")
-                        views.setInt(R.id.widget_item_1_color, "setBackgroundColor", discColor)
-                    } else {
-                        views.setViewVisibility(R.id.widget_item_1, View.GONE)
-                    }
-
-                    // Populate slot 2
-                    val item2 = todayActivities.getOrNull(1)
-                    if (item2 != null && settings.maxItems >= 2) {
-                        views.setViewVisibility(R.id.widget_item_2, View.VISIBLE)
-                        val disc = allDisciplines[item2.disciplineId]
-                        val discName = disc?.name ?: "Geral"
-                        val discColor = runCatching { Color.parseColor(disc?.colorHex ?: "#16A34A") }.getOrDefault(Color.GREEN)
-
-                        val timePrefix = if (settings.showTimes) "${item2.time} — " else ""
-                        views.setTextViewText(R.id.widget_item_2_subject_time, "$timePrefix$discName")
-                        views.setTextColor(R.id.widget_item_2_subject_time, discColor)
-                        views.setTextViewText(R.id.widget_item_2_title, "${item2.activityType.displayName}: ${item2.title}")
-                        views.setInt(R.id.widget_item_2_color, "setBackgroundColor", discColor)
-                    } else {
-                        views.setViewVisibility(R.id.widget_item_2, View.GONE)
-                    }
-
-                    // Populate slot 3
-                    val item3 = todayActivities.getOrNull(2)
-                    if (item3 != null && settings.maxItems >= 3) {
-                        views.setViewVisibility(R.id.widget_item_3, View.VISIBLE)
-                        val disc = allDisciplines[item3.disciplineId]
-                        val discName = disc?.name ?: "Geral"
-                        val discColor = runCatching { Color.parseColor(disc?.colorHex ?: "#EA580C") }.getOrDefault(Color.parseColor("#EA580C"))
-
-                        val timePrefix = if (settings.showTimes) "${item3.time} — " else ""
-                        views.setTextViewText(R.id.widget_item_3_subject_time, "$timePrefix$discName")
-                        views.setTextColor(R.id.widget_item_3_subject_time, discColor)
-                        views.setTextViewText(R.id.widget_item_3_title, "${item3.activityType.displayName}: ${item3.title}")
-                        views.setInt(R.id.widget_item_3_color, "setBackgroundColor", discColor)
-                    } else {
-                        views.setViewVisibility(R.id.widget_item_3, View.GONE)
-                    }
-
-                    appWidgetManager.updateAppWidget(appWidgetId, views)
-                } catch (e: Exception) {
-                    appWidgetManager.updateAppWidget(appWidgetId, views)
+                if (settings.showOnlyPending) activities = activities.filter { it.status != ActivityStatus.CONCLUIDA }
+                if (!settings.showClasses) activities = activities.filter { it.activityType != ActivityType.AULA }
+                if (settings.selectedDisciplineIds.isNotEmpty()) {
+                    activities = activities.filter { it.disciplineId in settings.selectedDisciplineIds }
                 }
+
+                views.setTextViewText(R.id.widget_title, header)
+                val visibleActivities = activities.take(settings.maxItems.coerceIn(1, itemContainers.size))
+
+                itemContainers.indices.forEach { index ->
+                    val activity = visibleActivities.getOrNull(index)
+                    val discipline = activity?.let { disciplines[it.disciplineId] }
+                    bindActivity(
+                        views = views,
+                        index = index,
+                        activity = activity,
+                        disciplineName = discipline?.name,
+                        disciplineLocation = discipline?.classroom,
+                        disciplineColor = activity?.let {
+                            runCatching { Color.parseColor(discipline?.colorHex ?: "#2563EB") }.getOrDefault(Color.BLUE)
+                        },
+                        showTime = settings.showTimes,
+                        showDeadline = settings.showDeadlines && activity?.dueDate == today,
+                        palette = palette
+                    )
+                }
+            } catch (_: Exception) {
+                views.setTextViewText(R.id.widget_title, "Hoje — Agenda Acadêmica")
+                itemContainers.forEach { views.setViewVisibility(it, View.GONE) }
             }
+
+            appWidgetManager.updateAppWidget(appWidgetId, views)
+        }
+
+        private fun bindActivity(
+            views: RemoteViews,
+            index: Int,
+            activity: AcademicActivity?,
+            disciplineName: String?,
+            disciplineLocation: String?,
+            disciplineColor: Int?,
+            showTime: Boolean,
+            showDeadline: Boolean,
+            palette: WidgetPalette
+        ) {
+            val containerId = itemContainers[index]
+            if (activity == null) {
+                views.setViewVisibility(containerId, View.GONE)
+                return
+            }
+
+            val color = disciplineColor ?: Color.BLUE
+            val timePrefix = if (showTime && activity.time.isNotBlank()) "${activity.time} — " else ""
+            views.setViewVisibility(containerId, View.VISIBLE)
+            views.setInt(containerId, "setBackgroundResource", palette.itemBackground)
+            views.setTextViewText(itemSubjects[index], "$timePrefix${disciplineName ?: "Geral"}")
+            views.setTextColor(itemSubjects[index], color)
+            views.setTextViewText(itemTitles[index], "${activity.activityType.displayName}: ${activity.title}")
+            views.setInt(itemColors[index], "setBackgroundColor", color)
+            val hasLocation = !disciplineLocation.isNullOrBlank()
+            views.setTextViewText(itemLocations[index], if (hasLocation) "📍 $disciplineLocation" else "")
+            views.setViewVisibility(itemLocations[index], if (hasLocation) View.VISIBLE else View.GONE)
+            views.setViewVisibility(itemDeadlines[index], if (showDeadline) View.VISIBLE else View.GONE)
+        }
+
+        private fun getPalette(context: Context): WidgetPalette {
+            val appearancePreferences = context.getSharedPreferences("appearance_preferences", Context.MODE_PRIVATE)
+            val systemIsDark = context.resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK == Configuration.UI_MODE_NIGHT_YES
+            val isDark = appearancePreferences.getBoolean("dark_theme", systemIsDark)
+            return if (isDark) {
+                WidgetPalette(
+                    background = R.drawable.widget_bg,
+                    itemBackground = R.drawable.widget_item_bg,
+                    primaryText = Color.WHITE,
+                    secondaryText = Color.parseColor("#CBD5E1"),
+                    deadlineText = Color.parseColor("#FCA5A5")
+                )
+            } else {
+                WidgetPalette(
+                    background = R.drawable.widget_bg_light,
+                    itemBackground = R.drawable.widget_item_bg_light,
+                    primaryText = Color.parseColor("#0F172A"),
+                    secondaryText = Color.parseColor("#475569"),
+                    deadlineText = Color.parseColor("#B91C1C")
+                )
+            }
+        }
+
+        private fun applyTheme(views: RemoteViews, palette: WidgetPalette) {
+            views.setInt(R.id.widget_root, "setBackgroundResource", palette.background)
+            views.setTextColor(R.id.widget_title, palette.primaryText)
+            itemTitles.forEach { views.setTextColor(it, palette.primaryText) }
+            itemLocations.forEach { views.setTextColor(it, palette.secondaryText) }
+            itemDeadlines.forEach { views.setTextColor(it, palette.deadlineText) }
         }
     }
 }

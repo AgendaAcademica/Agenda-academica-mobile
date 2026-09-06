@@ -25,10 +25,12 @@ data class AcademicActivity(
     val description: String = "",
     val activityType: ActivityType = ActivityType.TRABALHO,
     val date: String, // YYYY-MM-DD
+    val originalDate: String? = null, // Data anterior quando uma prova é remarcada
     val time: String = "08:00", // HH:MM
     val dueDate: String? = null, // YYYY-MM-DD
     val priority: Priority = Priority.MEDIA,
     val status: ActivityStatus = ActivityStatus.PENDENTE,
+    val grade: Double? = null, // Nota da prova (0 a 10)
     val sourceDocument: String = "",
     val notes: String = "",
     val remindersEnabled: Boolean = true,
