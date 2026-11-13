@@ -22,11 +22,14 @@ import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.example.BuildConfig
 import com.example.data.model.AcademicActivity
 import com.example.data.model.ActivityStatus
 import com.example.data.model.ActivityType
@@ -40,20 +43,17 @@ import java.util.Calendar
 @Composable
 fun DashboardScreen(
     viewModel: AcademicViewModel,
-    isDarkTheme: Boolean,
-    onToggleTheme: () -> Unit,
     onNavigateToImport: () -> Unit,
     onNavigateToDisciplines: () -> Unit,
     onNavigateToReminders: () -> Unit,
     onNavigateToWidget: () -> Unit,
+    onNavigateToSettings: () -> Unit = {},
     onOpenAddActivity: () -> Unit
 ) {
     val context = LocalContext.current
     val profilePreferences = remember { context.getSharedPreferences("academic_profile", android.content.Context.MODE_PRIVATE) }
     val tutorialPreferences = remember { context.getSharedPreferences("app_tutorial", android.content.Context.MODE_PRIVATE) }
     var userName by remember { mutableStateOf(profilePreferences.getString("user_name", "Estudante") ?: "Estudante") }
-    var userNameDraft by remember { mutableStateOf(userName) }
-    var showUserNameDialog by remember { mutableStateOf(false) }
     var showTutorial by remember { mutableStateOf(!tutorialPreferences.getBoolean("completed", false)) }
     var tutorialStep by remember { mutableIntStateOf(0) }
     val disciplines by viewModel.disciplines.collectAsState()
@@ -115,10 +115,7 @@ fun DashboardScreen(
                             modifier = Modifier
                                 .weight(1f)
                                 .padding(end = 4.dp)
-                                .clickable {
-                                    userNameDraft = userName
-                                    showUserNameDialog = true
-                                }
+                                .clickable(onClick = onNavigateToSettings)
                         ) {
                             Box(
                                 modifier = Modifier
@@ -147,6 +144,11 @@ fun DashboardScreen(
                                     fontSize = 14.sp,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
+                                Text(
+                                    text = "Agenda Acadêmica • versão ${BuildConfig.VERSION_NAME}",
+                                    fontSize = 11.sp,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.8f)
+                                )
                             }
                         }
 
@@ -160,13 +162,6 @@ fun DashboardScreen(
                                 Icon(
                                     imageVector = Icons.Outlined.HelpOutline,
                                     contentDescription = "Abrir tutorial",
-                                    tint = MaterialTheme.colorScheme.primary
-                                )
-                            }
-                            IconButton(onClick = onToggleTheme) {
-                                Icon(
-                                    imageVector = if (isDarkTheme) Icons.Outlined.LightMode else Icons.Outlined.DarkMode,
-                                    contentDescription = if (isDarkTheme) "Ativar modo claro" else "Ativar modo escuro",
                                     tint = MaterialTheme.colorScheme.primary
                                 )
                             }
@@ -500,33 +495,6 @@ fun DashboardScreen(
 
     }
 
-    if (showUserNameDialog) {
-        AlertDialog(
-            onDismissRequest = { showUserNameDialog = false },
-            icon = { Icon(Icons.Default.Person, contentDescription = null) },
-            title = { Text("Seu nome") },
-            text = {
-                OutlinedTextField(
-                    value = userNameDraft,
-                    onValueChange = { if (it.length <= 30) userNameDraft = it },
-                    label = { Text("Como deseja ser chamado?") },
-                    singleLine = true
-                )
-            },
-            confirmButton = {
-                TextButton(
-                    enabled = userNameDraft.isNotBlank(),
-                    onClick = {
-                        userName = userNameDraft.trim()
-                        profilePreferences.edit().putString("user_name", userName).apply()
-                        showUserNameDialog = false
-                    }
-                ) { Text("Salvar") }
-            },
-            dismissButton = { TextButton(onClick = { showUserNameDialog = false }) { Text("Cancelar") } }
-        )
-    }
-
     if (showTutorial) {
         DashboardTutorialDialog(
             step = tutorialStep,
@@ -591,13 +559,13 @@ private fun DashboardTutorialDialog(
     val (title, description, icon) = when (step) {
         0 -> Triple(
             "Personalize seu nome",
-            "Toque no seu nome ou no ícone de perfil, no topo da tela inicial, para escolher como deseja ser chamado.",
+            "Abra Configurações na barra inferior ou toque no seu perfil no topo da tela inicial. Na seção Perfil, edite seu nome e toque em Salvar perfil.",
             Icons.Default.Person
         )
         1 -> Triple(
-            "Escolha o tema",
-            "Use o ícone de lua ou sol, no canto superior direito, para alternar rapidamente entre os modos claro e escuro.",
-            Icons.Outlined.DarkMode
+            "Conheça as configurações",
+            "Em Configurações, use Tema escuro na seção Aparência e widgets para mudar o tema. Você também pode configurar widgets, abrir lembretes e sair da conta na seção Perfil.",
+            Icons.Default.Settings
         )
         2 -> Triple(
             "Cadastre suas disciplinas",
@@ -700,6 +668,7 @@ fun DashboardActivityCard(
     val isCancelled = activity.status == ActivityStatus.CANCELADA
     val isFalta = activity.status == ActivityStatus.FALTA
     val isUrgent = activity.priority == Priority.URGENTE
+    val isDateChanged = !activity.originalDate.isNullOrBlank() && activity.originalDate != activity.date
     var showQuickGradeDialog by remember(activity.id) { mutableStateOf(false) }
     var showQuickDateDialog by remember(activity.id) { mutableStateOf(false) }
 
@@ -765,10 +734,6 @@ fun DashboardActivityCard(
                         color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.82f),
                         letterSpacing = 0.4.sp
                     )
-                    if (!activity.originalDate.isNullOrBlank() && activity.originalDate != activity.date) {
-                        Spacer(modifier = Modifier.height(3.dp))
-                        Text("DATA ALTERADA", fontSize = 10.sp, fontWeight = FontWeight.ExtraBold, color = Color(0xFFB45309))
-                    }
                 }
             }
 
@@ -824,7 +789,7 @@ fun DashboardActivityCard(
                     }
                 }
 
-                if (isCancelled || isUrgent || discipline?.classroom?.isNotBlank() == true) {
+                if (isCancelled || isUrgent || isDateChanged || discipline?.classroom?.isNotBlank() == true) {
                     Spacer(modifier = Modifier.height(3.dp))
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         if (isCancelled) {
@@ -868,6 +833,30 @@ fun DashboardActivityCard(
                             }
                             Spacer(modifier = Modifier.width(6.dp))
                         }
+                        if (isDateChanged) {
+                            Surface(color = Color(0xFFFFF3CD), shape = RoundedCornerShape(4.dp)) {
+                                Row(
+                                    modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Icon(
+                                        Icons.Default.Update,
+                                        contentDescription = null,
+                                        tint = Color(0xFF8B5000),
+                                        modifier = Modifier.size(10.dp)
+                                    )
+                                    Spacer(modifier = Modifier.width(3.dp))
+                                    Text(
+                                        "Data alterada",
+                                        fontSize = 10.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = Color(0xFF8B5000),
+                                        maxLines = 1
+                                    )
+                                }
+                            }
+                            Spacer(modifier = Modifier.width(6.dp))
+                        }
                         if (discipline?.classroom?.isNotBlank() == true) {
                             Text(
                                 text = discipline.classroom,
@@ -882,7 +871,16 @@ fun DashboardActivityCard(
                 }
             }
 
-            if (activity.activityType != ActivityType.AULA) {
+            if (activity.activityType == ActivityType.PROVA) {
+                Checkbox(
+                    checked = activity.status == ActivityStatus.CONCLUIDA,
+                    onCheckedChange = { checked ->
+                        onStatusChange(if (checked) ActivityStatus.CONCLUIDA else ActivityStatus.PENDENTE)
+                    },
+                    modifier = Modifier.semantics { contentDescription = "Prova feita" },
+                    colors = CheckboxDefaults.colors(uncheckedColor = MaterialTheme.colorScheme.onSurfaceVariant)
+                )
+            } else if (activity.activityType != ActivityType.AULA) {
                 Spacer(modifier = Modifier.width(8.dp))
 
                 // Quick Status Action Icon for assessments and assignments
@@ -967,7 +965,12 @@ fun DashboardActivityCard(
                         onClick = { showQuickDateDialog = true },
                         modifier = Modifier.weight(1f).heightIn(min = 38.dp),
                         shape = RoundedCornerShape(10.dp),
-                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 6.dp)
+                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 6.dp),
+                        colors = ButtonDefaults.outlinedButtonColors(
+                            containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.92f),
+                            contentColor = MaterialTheme.colorScheme.primary
+                        ),
+                        border = BorderStroke(1.25.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.55f))
                     ) {
                         Icon(Icons.Default.EventRepeat, contentDescription = null, modifier = Modifier.size(14.dp))
                         Spacer(modifier = Modifier.width(4.dp))
@@ -977,7 +980,12 @@ fun DashboardActivityCard(
                         onClick = { showQuickGradeDialog = true },
                         modifier = Modifier.weight(1f).heightIn(min = 38.dp),
                         shape = RoundedCornerShape(10.dp),
-                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 6.dp)
+                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 6.dp),
+                        colors = ButtonDefaults.outlinedButtonColors(
+                            containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.92f),
+                            contentColor = MaterialTheme.colorScheme.primary
+                        ),
+                        border = BorderStroke(1.25.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.55f))
                     ) {
                         Icon(Icons.Default.Grade, contentDescription = null, modifier = Modifier.size(14.dp))
                         Spacer(modifier = Modifier.width(4.dp))
@@ -1118,11 +1126,11 @@ fun calendarWeekFor(allDays: List<CalendarDayItem>, selectedDate: String): List<
     val selectedIndex = allDays.indexOfFirst { it.dateStr == selectedDate }
     if (selectedIndex < 0) return allDays.take(7)
     val day = allDays[selectedIndex]
-    val mondayOffset = when (day.dayLabel) {
-        "SEG" -> 0; "TER" -> 1; "QUA" -> 2; "QUI" -> 3
-        "SEX" -> 4; "SÁB" -> 5; else -> 6
+    val sundayOffset = when (day.dayLabel) {
+        "DOM" -> 0; "SEG" -> 1; "TER" -> 2; "QUA" -> 3
+        "QUI" -> 4; "SEX" -> 5; else -> 6
     }
-    val start = (selectedIndex - mondayOffset).coerceAtLeast(0)
+    val start = (selectedIndex - sundayOffset).coerceAtLeast(0)
     return allDays.drop(start).take(7)
 }
 
@@ -1176,8 +1184,8 @@ private fun ExpandedMonthCalendar(
     val canNavigateNext = visibleMonthIndex in 0 until availableMonths.lastIndex
     val monthDays = allDays.filter { it.dateStr.startsWith(visibleMonth) }
     val firstOffset = when (monthDays.firstOrNull()?.dayLabel) {
-        "SEG" -> 0; "TER" -> 1; "QUA" -> 2; "QUI" -> 3
-        "SEX" -> 4; "SÁB" -> 5; else -> 6
+        "DOM" -> 0; "SEG" -> 1; "TER" -> 2; "QUA" -> 3
+        "QUI" -> 4; "SEX" -> 5; else -> 6
     }
     val cells: List<CalendarDayItem?> = List(firstOffset) { null } + monthDays
     val monthTitle = monthDays.firstOrNull()?.monthName.orEmpty()
@@ -1236,7 +1244,7 @@ private fun ExpandedMonthCalendar(
             }
         }
         Row(modifier = Modifier.fillMaxWidth()) {
-            listOf("SEG", "TER", "QUA", "QUI", "SEX", "SÁB", "DOM").forEach { label ->
+            listOf("DOM", "SEG", "TER", "QUA", "QUI", "SEX", "SÁB").forEach { label ->
                 Text(
                     text = label,
                     modifier = Modifier.weight(1f),
@@ -1523,6 +1531,7 @@ fun DashboardModalBottomSheet(
     onGradeChange: (AcademicActivity, Double?) -> Unit,
     onDateChange: (AcademicActivity, String) -> Unit,
     onNavigateToDisciplines: () -> Unit,
+    onNavigateToSettings: () -> Unit = {},
     onOpenAddActivity: () -> Unit,
     onSelectDiscipline: (Discipline) -> Unit
 ) {

@@ -8,6 +8,9 @@ import kotlinx.coroutines.flow.Flow
 
 @Dao
 interface ActivityDao {
+    @Query("DELETE FROM activities")
+    suspend fun deleteAll()
+
     @Query("SELECT * FROM activities ORDER BY date ASC, time ASC")
     fun getAllActivities(): Flow<List<AcademicActivity>>
 
@@ -46,6 +49,9 @@ interface ActivityDao {
 
     @Query("SELECT * FROM activities WHERE disciplineId = :disciplineId AND activityType = 'AULA' AND sourceDocument = :source ORDER BY date ASC, time ASC, id ASC")
     suspend fun getGeneratedClasses(disciplineId: Long, source: String = "Horário das Aulas"): List<AcademicActivity>
+
+    @Query("SELECT * FROM activities WHERE disciplineId = :disciplineId AND activityType = 'AULA' ORDER BY date ASC, time ASC, id ASC")
+    suspend fun getAllClassesByDiscipline(disciplineId: Long): List<AcademicActivity>
 
     @Query("DELETE FROM activities WHERE id IN (:ids)")
     suspend fun deleteActivitiesByIds(ids: List<Long>)

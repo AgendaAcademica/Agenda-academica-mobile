@@ -31,6 +31,21 @@ import com.example.data.model.Discipline
 import com.example.ui.components.*
 import com.example.ui.viewmodel.AcademicViewModel
 
+private fun abbreviateScheduleDays(schedule: String): String {
+    val days = listOf(
+        "segunda(?:[- ]feira)?" to "Seg",
+        "ter[çc]a(?:[- ]feira)?" to "Ter",
+        "quarta(?:[- ]feira)?" to "Qua",
+        "quinta(?:[- ]feira)?" to "Qui",
+        "sexta(?:[- ]feira)?" to "Sex",
+        "s[áa]bado" to "Sáb",
+        "domingo" to "Dom"
+    )
+    return days.fold(schedule) { text, (day, abbreviation) ->
+        Regex("\\b$day\\b", RegexOption.IGNORE_CASE).replace(text, abbreviation)
+    }
+}
+
 @Composable
 fun DisciplinesScreen(
     viewModel: AcademicViewModel,
@@ -191,7 +206,7 @@ fun DisciplinesScreen(
                                 Row(verticalAlignment = Alignment.CenterVertically) {
                                     Icon(Icons.Default.Schedule, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(15.dp))
                                     Spacer(modifier = Modifier.width(6.dp))
-                                    Text(disc.schedule, fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    Text(abbreviateScheduleDays(disc.schedule), fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                 }
                             }
 
@@ -252,6 +267,7 @@ fun DisciplineDetailView(
         context.getSharedPreferences("discipline_tutorial", android.content.Context.MODE_PRIVATE)
     }
     val discColor = parseColorHex(discipline.colorHex)
+    val headerContentColor = Color.Black
     val exams = activities.filter { it.activityType == ActivityType.PROVA }
     val classes = activities.filter { it.activityType == ActivityType.AULA }
     val assignments = activities.filter { it.activityType != ActivityType.PROVA && it.activityType != ActivityType.AULA }
@@ -349,7 +365,7 @@ fun DisciplineDetailView(
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         IconButton(onClick = onBack) {
-                            Icon(Icons.Default.ArrowBack, contentDescription = "Voltar", tint = Color.White)
+                            Icon(Icons.Default.ArrowBack, contentDescription = "Voltar", tint = headerContentColor)
                         }
 
                         Row {
@@ -357,13 +373,13 @@ fun DisciplineDetailView(
                                 tutorialStep = 0
                                 showDisciplineTutorial = true
                             }) {
-                                Icon(Icons.Default.HelpOutline, contentDescription = "Abrir tutorial da disciplina", tint = Color.White)
+                                Icon(Icons.Default.HelpOutline, contentDescription = "Abrir tutorial da disciplina", tint = headerContentColor)
                             }
                             IconButton(onClick = onEdit) {
-                                Icon(Icons.Default.Edit, contentDescription = "Editar", tint = Color.White)
+                                Icon(Icons.Default.Edit, contentDescription = "Editar", tint = headerContentColor)
                             }
                             IconButton(onClick = { showDeleteConfirmation = true }) {
-                                Icon(Icons.Default.Delete, contentDescription = "Excluir", tint = Color.White)
+                                Icon(Icons.Default.Delete, contentDescription = "Excluir", tint = headerContentColor)
                             }
                         }
                     }
@@ -372,16 +388,16 @@ fun DisciplineDetailView(
 
                     Text(
                         text = discipline.name,
-                        fontSize = 22.sp,
+                        fontSize = 24.sp,
                         fontWeight = FontWeight.Bold,
-                        color = Color.White
+                        color = headerContentColor
                     )
 
                     if (discipline.code.isNotBlank()) {
                         Text(
                             text = "${discipline.code} • Semestre ${discipline.term}",
-                            fontSize = 13.sp,
-                            color = Color.White.copy(alpha = 0.85f)
+                            fontSize = 15.sp,
+                            color = headerContentColor.copy(alpha = 0.78f)
                         )
                     }
 
@@ -389,27 +405,27 @@ fun DisciplineDetailView(
 
                     if (discipline.professor.isNotBlank()) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
-                            Icon(Icons.Default.Person, contentDescription = null, tint = Color.White, modifier = Modifier.size(15.dp))
-                            Spacer(modifier = Modifier.width(6.dp))
-                            Text("Professor: ${discipline.professor}", color = Color.White, fontSize = 12.sp)
+                            Icon(Icons.Default.Person, contentDescription = null, tint = headerContentColor, modifier = Modifier.size(17.dp))
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text("Professor: ${discipline.professor}", color = headerContentColor, fontSize = 14.sp)
                         }
                     }
 
                     if (discipline.classroom.isNotBlank()) {
                         Spacer(modifier = Modifier.height(4.dp))
                         Row(verticalAlignment = Alignment.CenterVertically) {
-                            Icon(Icons.Default.Place, contentDescription = null, tint = Color.White, modifier = Modifier.size(15.dp))
-                            Spacer(modifier = Modifier.width(6.dp))
-                            Text("Local: ${discipline.classroom}", color = Color.White, fontSize = 12.sp)
+                            Icon(Icons.Default.Place, contentDescription = null, tint = headerContentColor, modifier = Modifier.size(17.dp))
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text("Local: ${discipline.classroom}", color = headerContentColor, fontSize = 14.sp)
                         }
                     }
 
                     if (discipline.schedule.isNotBlank()) {
                         Spacer(modifier = Modifier.height(4.dp))
                         Row(verticalAlignment = Alignment.CenterVertically) {
-                            Icon(Icons.Default.Schedule, contentDescription = null, tint = Color.White, modifier = Modifier.size(15.dp))
-                            Spacer(modifier = Modifier.width(6.dp))
-                            Text("Horário: ${discipline.schedule}", color = Color.White, fontSize = 12.sp)
+                            Icon(Icons.Default.Schedule, contentDescription = null, tint = headerContentColor, modifier = Modifier.size(17.dp))
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text("Horário: ${abbreviateScheduleDays(discipline.schedule)}", color = headerContentColor, fontSize = 14.sp)
                         }
                     }
                 }
@@ -434,7 +450,7 @@ fun DisciplineDetailView(
                         Text(
                             text = "Cronograma da Disciplina",
                             fontWeight = FontWeight.Bold,
-                            fontSize = 15.sp,
+                            fontSize = 17.sp,
                             color = MaterialTheme.colorScheme.onSurface
                         )
                         Button(
@@ -444,7 +460,7 @@ fun DisciplineDetailView(
                         ) {
                             Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(16.dp))
                             Spacer(modifier = Modifier.width(4.dp))
-                            Text("Adicionar Evento", fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                            Text("Adicionar Evento", fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
                         }
                     }
 
@@ -454,7 +470,7 @@ fun DisciplineDetailView(
                             Tab(
                                 selected = selectedTab == index,
                                 onClick = { selectedTab = index },
-                                text = { Text(title, fontSize = 12.sp, maxLines = 1) }
+                                text = { Text(title, fontSize = 14.sp, fontWeight = FontWeight.SemiBold, maxLines = 1) }
                             )
                         }
                     }

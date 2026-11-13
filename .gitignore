@@ -18,3 +18,4 @@ local.properties
 debug.keystore
 *.jks
 *.keystore
+/tmp/firebase-cli-cache/

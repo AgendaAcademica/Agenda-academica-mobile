@@ -49,6 +49,8 @@ data class AcademicDocument(
     val fileName: String,
     val disciplineId: Long? = null,
     val rawText: String = "",
+    @androidx.room.ColumnInfo(defaultValue = "''")
+    val fileFingerprint: String = "",
     val parsedSummary: String = "",
     val itemsExtractedCount: Int = 0,
     val importedAt: Long = System.currentTimeMillis()

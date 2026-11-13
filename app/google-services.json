@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "9755101230",
+    "project_id": "agendaacademicabd",
+    "storage_bucket": "agendaacademicabd.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:9755101230:android:da56db0139c027eaa337bf",
+        "android_client_info": {
+          "package_name": "com.aistudio.academicagenda.app"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyAreF3yTyGGrh086dD2QS7LIIBrbu2nos4"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

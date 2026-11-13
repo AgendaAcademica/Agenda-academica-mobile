@@ -25,6 +25,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
@@ -34,8 +35,10 @@ import com.example.ai.ExtractedEvent
 import com.example.ai.ExtractedSyllabus
 import com.example.data.model.AcademicDocument
 import com.example.data.model.ActivityType
+import com.example.data.model.Discipline
 import com.example.data.model.Priority
 import com.example.data.repository.DocumentUpload
+import com.example.data.repository.normalizeDisciplineIdentity
 import com.example.ui.components.*
 import com.example.ui.viewmodel.AcademicViewModel
 import java.text.SimpleDateFormat
@@ -47,7 +50,69 @@ enum class DocumentImportTab(val title: String) {
     HISTORY("Histórico")
 }
 
+private fun summarizeImportEvents(events: List<ExtractedEvent>): String {
+    val labels = listOf(
+        Triple(ActivityType.AULA, "aula", "aulas"),
+        Triple(ActivityType.PROVA, "prova", "provas"),
+        Triple(ActivityType.SEMINARIO, "seminário", "seminários"),
+        Triple(ActivityType.TRABALHO, "trabalho", "trabalhos"),
+        Triple(ActivityType.EXERCICIO, "exercício", "exercícios"),
+        Triple(ActivityType.PROJETO, "projeto", "projetos"),
+        Triple(ActivityType.LEITURA, "leitura", "leituras"),
+        Triple(ActivityType.PRAZO_ENTREGA, "prazo de entrega", "prazos de entrega"),
+        Triple(ActivityType.EVENTO, "evento", "eventos")
+    )
+    val counts = events.groupingBy { it.activityType }.eachCount()
+    return labels.mapNotNull { (type, singular, plural) ->
+        val count = counts[type] ?: return@mapNotNull null
+        "$count ${if (count == 1) singular else plural}"
+    }.joinToString(" • ").ifEmpty { "Nenhuma atividade com data identificada." }
+}
+
 private data class SelectedImportFile(val uri: Uri, val name: String, val mimeType: String, val size: Long?)
+
+private fun <T> List<T>.replaceAt(index: Int, value: T): List<T> =
+    toMutableList().also { list -> if (index in list.indices) list[index] = value }
+
+private fun classroomConflictFor(syllabus: ExtractedSyllabus, disciplines: List<Discipline>): Boolean {
+    val existing = disciplines.firstOrNull {
+        syllabus.disciplineCode.isNotBlank() && it.code.equals(syllabus.disciplineCode.trim(), ignoreCase = true)
+    } ?: disciplines.firstOrNull {
+        normalizeDisciplineIdentity(it.name) == normalizeDisciplineIdentity(syllabus.disciplineName)
+    }
+    return existing?.classroom?.isNotBlank() == true &&
+        syllabus.classroom.isNotBlank() &&
+        !existing.classroom.equals(syllabus.classroom, ignoreCase = true)
+}
+
+@Composable
+private fun ImportDocumentGuideRow(
+    icon: ImageVector,
+    title: String,
+    description: String
+) {
+    Row(verticalAlignment = Alignment.Top) {
+        Surface(
+            modifier = Modifier.size(34.dp),
+            shape = RoundedCornerShape(9.dp),
+            color = MaterialTheme.colorScheme.primary.copy(alpha = 0.12f)
+        ) {
+            Box(contentAlignment = Alignment.Center) {
+                Icon(icon, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(19.dp))
+            }
+        }
+        Spacer(modifier = Modifier.width(10.dp))
+        Column(modifier = Modifier.weight(1f)) {
+            Text(title, fontWeight = FontWeight.SemiBold, fontSize = 13.sp, color = MaterialTheme.colorScheme.onPrimaryContainer)
+            Text(
+                description,
+                fontSize = 12.sp,
+                lineHeight = 16.sp,
+                color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.8f)
+            )
+        }
+    }
+}
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -55,9 +120,24 @@ fun DocumentImportScreen(
     viewModel: AcademicViewModel,
     onFinishedImport: () -> Unit
 ) {
+    val repeatedNames by viewModel.repeatedImportNames.collectAsState()
+    if (repeatedNames.isNotEmpty()) {
+        AlertDialog(
+            onDismissRequest = viewModel::cancelRepeatedImport,
+            title = { Text("Documento já importado") },
+            text = { Text("Já existe uma importação deste documento para: ${repeatedNames.joinToString(", ")}. Deseja recriar as atividades? Todas as atividades dessas disciplinas serão substituídas pelas atividades selecionadas, incluindo as adicionadas manualmente. Notas, progresso e alterações serão perdidos.") },
+            confirmButton = { TextButton(onClick = viewModel::confirmRepeatedImport) { Text("Substituir atividades") } },
+            dismissButton = { TextButton(onClick = viewModel::cancelRepeatedImport) { Text("Cancelar") } }
+        )
+    }
     val context = LocalContext.current
+    val importGuidePreferences = remember {
+        context.getSharedPreferences("document_import_guide", android.content.Context.MODE_PRIVATE)
+    }
     val isAnalyzing by viewModel.isAnalyzingDocument.collectAsState()
     val extractedSyllabus by viewModel.extractedSyllabus.collectAsState()
+    val extractedSyllabi by viewModel.extractedSyllabi.collectAsState()
+    val pendingImportDisciplineCount by viewModel.pendingImportDisciplineCount.collectAsState()
     val importSuccessMessage by viewModel.importSuccessMessage.collectAsState()
     val documentAnalysisError by viewModel.documentAnalysisError.collectAsState()
     val documents by viewModel.documents.collectAsState()
@@ -66,12 +146,18 @@ fun DocumentImportScreen(
     val disciplinesMap = remember(disciplines) { disciplines.associateBy { it.id } }
 
     var activeTab by remember { mutableStateOf(DocumentImportTab.IMPORT) }
+    var showImportGuide by remember {
+        mutableStateOf(!importGuidePreferences.getBoolean("intro_seen", false))
+    }
     var selectedFiles by remember { mutableStateOf<List<SelectedImportFile>>(emptyList()) }
 
     // Editable copy of events for review
     var editableEvents by remember { mutableStateOf<List<ExtractedEvent>>(emptyList()) }
     var editableSyllabus by remember { mutableStateOf<ExtractedSyllabus?>(null) }
+    var useIdentifiedClassroom by remember { mutableStateOf(false) }
     var editingEventIndex by remember { mutableStateOf<Int?>(null) }
+    var editableTimetableSyllabi by remember { mutableStateOf<List<ExtractedSyllabus>>(emptyList()) }
+    var expandedTimetableIndex by remember { mutableStateOf<Int?>(null) }
 
     // State for viewing/deleting documents in history
     var documentToView by remember { mutableStateOf<AcademicDocument?>(null) }
@@ -106,13 +192,18 @@ fun DocumentImportScreen(
         selectedFiles = (selectedFiles + added).distinctBy { it.uri }.take(10)
     }
 
-    LaunchedEffect(extractedSyllabus) {
+    LaunchedEffect(extractedSyllabus, disciplines) {
         val extracted = extractedSyllabus
         if (extracted != null) {
+            useIdentifiedClassroom = false
             val events = extracted.events.map { it.copy() }
-            editableSyllabus = extracted.copy(
-                schedule = inferScheduleDaysFromClasses(extracted.schedule, events)
-            )
+            val existingDiscipline = disciplines.firstOrNull {
+                extracted.disciplineCode.isNotBlank() &&
+                    it.code.equals(extracted.disciplineCode.trim(), ignoreCase = true)
+            } ?: disciplines.firstOrNull {
+                normalizeDisciplineIdentity(it.name) == normalizeDisciplineIdentity(extracted.disciplineName)
+            }
+            editableSyllabus = mergeExistingDisciplineData(extracted, existingDiscipline, events)
             editableEvents = events
             activeTab = DocumentImportTab.IMPORT
         } else {
@@ -122,9 +213,20 @@ fun DocumentImportScreen(
         }
     }
 
+    LaunchedEffect(extractedSyllabi) {
+        editableTimetableSyllabi = extractedSyllabi.map { syllabus ->
+            syllabus.copy(schedule = inferScheduleDaysFromClasses(syllabus.schedule, syllabus.events))
+        }
+        expandedTimetableIndex = if (extractedSyllabi.size == 1) 0 else null
+    }
+
     LaunchedEffect(importSuccessMessage) {
         if (importSuccessMessage != null) selectedFiles = emptyList()
     }
+
+    val isTimetableReview = extractedSyllabi.isNotEmpty() &&
+        extractedSyllabi.all { it.events.isEmpty() } &&
+        extractedSyllabi.any { it.schedule.isNotBlank() }
 
     Box(modifier = Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
         LazyColumn(
@@ -190,6 +292,75 @@ fun DocumentImportScreen(
             }
         }
 
+        if (showImportGuide) {
+            item {
+                Card(
+                    modifier = Modifier.fillMaxWidth().testTag("document_import_first_access_guide"),
+                    shape = RoundedCornerShape(18.dp),
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer),
+                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.35f))
+                ) {
+                    Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(
+                                Icons.Default.TipsAndUpdates,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.primary
+                            )
+                            Spacer(modifier = Modifier.width(10.dp))
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    "Como funciona a análise",
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 16.sp,
+                                    color = MaterialTheme.colorScheme.onPrimaryContainer
+                                )
+                                Text(
+                                    "O resultado depende das informações disponíveis em cada documento.",
+                                    fontSize = 12.sp,
+                                    color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.8f)
+                                )
+                            }
+                        }
+
+                        ImportDocumentGuideRow(
+                            icon = Icons.Default.Badge,
+                            title = "Comprovante de matrícula",
+                            description = "Identifica várias disciplinas, professores, salas e horários de aula."
+                        )
+                        ImportDocumentGuideRow(
+                            icon = Icons.Default.Description,
+                            title = "Plano de ensino",
+                            description = "Identifica aulas com datas, provas, trabalhos, prazos e outras informações importantes."
+                        )
+                        ImportDocumentGuideRow(
+                            icon = Icons.Default.CalendarViewWeek,
+                            title = "Quadro de horários",
+                            description = "Identifica disciplinas e horários, mas normalmente não informa eventos detalhados, professor ou local."
+                        )
+
+                        Text(
+                            "Antes de salvar, você poderá revisar e completar os campos identificados.",
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Medium,
+                            color = MaterialTheme.colorScheme.onPrimaryContainer
+                        )
+                        Button(
+                            onClick = {
+                                importGuidePreferences.edit().putBoolean("intro_seen", true).apply()
+                                showImportGuide = false
+                            },
+                            modifier = Modifier.align(Alignment.End)
+                        ) {
+                            Icon(Icons.Default.Check, contentDescription = null, modifier = Modifier.size(17.dp))
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text("Entendi")
+                        }
+                    }
+                }
+            }
+        }
+
         // Navigation Tabs: Importar vs Histórico de Documentos
         item {
             TabRow(
@@ -243,7 +414,11 @@ fun DocumentImportScreen(
                     ) {
                         Icon(Icons.Default.CheckCircle, contentDescription = null, tint = Color(0xFF16A34A), modifier = Modifier.size(24.dp))
                         Spacer(modifier = Modifier.width(12.dp))
-                        Column(modifier = Modifier.weight(1f)) {
+                        Column(
+                            modifier = Modifier
+                                .weight(1f)
+                                .padding(end = 8.dp)
+                        ) {
                             Text("Importação Concluída!", color = Color(0xFF14532D), fontWeight = FontWeight.Bold, fontSize = 14.sp)
                             Text(importSuccessMessage!!, color = Color(0xFF166534), fontSize = 12.sp)
                         }
@@ -398,7 +573,7 @@ fun DocumentImportScreen(
                         Button(
                             onClick = {
                                 viewModel.analyzeDocuments(
-                                    selectedFiles.map { DocumentUpload(it.uri, it.name, it.mimeType) }
+                                    selectedFiles.map { DocumentUpload(it.uri, it.name, it.mimeType, it.size ?: 0) }
                                 )
                             },
                             modifier = Modifier
@@ -415,7 +590,7 @@ fun DocumentImportScreen(
                             } else {
                                 Icon(Icons.Default.AutoAwesome, contentDescription = null, modifier = Modifier.size(20.dp))
                                 Spacer(modifier = Modifier.width(8.dp))
-                                Text("Processar Documento e Extrair Eventos", fontWeight = FontWeight.Bold, fontSize = 15.sp)
+                                Text("Analisar documento", fontWeight = FontWeight.Bold, fontSize = 15.sp)
                             }
                         }
                         if (isAnalyzing) {
@@ -425,15 +600,192 @@ fun DocumentImportScreen(
                                 fontSize = 12.sp,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
+                            OutlinedButton(
+                                onClick = {
+                                    viewModel.cancelDocumentAnalysis()
+                                    selectedFiles = emptyList()
+                                },
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .testTag("btn_cancel_document_analysis"),
+                                shape = RoundedCornerShape(14.dp),
+                                colors = ButtonDefaults.outlinedButtonColors(
+                                    contentColor = MaterialTheme.colorScheme.error
+                                ),
+                                border = BorderStroke(1.dp, MaterialTheme.colorScheme.error)
+                            ) {
+                                Icon(Icons.Default.Close, contentDescription = null)
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text("Cancelar importação", fontWeight = FontWeight.Bold)
+                            }
                         }
                     }
                 }
             }
 
             // Step 2: Interactive Review of Extracted Information
-            if (extractedSyllabus != null) {
+            if (isTimetableReview) {
+                item {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text("2. Revise as disciplinas", fontSize = 17.sp, fontWeight = FontWeight.Bold)
+                            Text(
+                                "${editableTimetableSyllabi.size} disciplinas identificadas no documento",
+                                fontSize = 12.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        TextButton(
+                            onClick = { viewModel.clearExtractedSyllabus() },
+                            modifier = Modifier.widthIn(min = 84.dp),
+                            contentPadding = PaddingValues(horizontal = 8.dp)
+                        ) {
+                            Text(
+                                text = "Cancelar",
+                                color = MaterialTheme.colorScheme.error,
+                                maxLines = 1,
+                                softWrap = false
+                            )
+                        }
+                    }
+                }
+
+                item {
+                    Card(
+                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.tertiaryContainer),
+                        shape = RoundedCornerShape(14.dp)
+                    ) {
+                        Row(modifier = Modifier.padding(14.dp), verticalAlignment = Alignment.Top) {
+                            Icon(Icons.Default.Info, contentDescription = null, tint = MaterialTheme.colorScheme.onTertiaryContainer)
+                            Spacer(modifier = Modifier.width(10.dp))
+                            Text(
+                                "Você pode expandir e corrigir cada disciplina ou salvar tudo agora, mesmo com campos vazios. Para quadros de horário e comprovantes de matrícula, serão criadas somente as aulas semanais, da data de hoje até o fim do período. Elas ficarão identificadas como criadas sem base de plano acadêmico.",
+                                color = MaterialTheme.colorScheme.onTertiaryContainer,
+                                fontSize = 13.sp,
+                                lineHeight = 18.sp
+                            )
+                        }
+                    }
+                }
+
+                itemsIndexed(editableTimetableSyllabi) { index, syllabus ->
+                    val expanded = expandedTimetableIndex == index
+                    val discColor = parseColorHex(syllabus.recommendedColorHex)
+                    Card(
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(16.dp),
+                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                        border = BorderStroke(1.dp, discColor.copy(alpha = 0.55f))
+                    ) {
+                        Column(modifier = Modifier.padding(14.dp)) {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clickable { expandedTimetableIndex = if (expanded) null else index },
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Box(modifier = Modifier.size(10.dp).clip(CircleShape).background(discColor))
+                                Spacer(modifier = Modifier.width(10.dp))
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(syllabus.disciplineName.ifBlank { "Disciplina sem nome" }, fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                                    Text(
+                                        listOf(syllabus.disciplineCode, syllabus.schedule).filter { it.isNotBlank() }.joinToString(" • ").ifBlank { "Dados incompletos" },
+                                        fontSize = 11.sp,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        maxLines = 2
+                                    )
+                                }
+                                Icon(
+                                    if (expanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
+                                    contentDescription = if (expanded) "Recolher disciplina" else "Editar disciplina"
+                                )
+                            }
+
+                            AnimatedVisibility(visible = expanded) {
+                                Column {
+                                    Spacer(modifier = Modifier.height(14.dp))
+                                    OutlinedTextField(
+                                        value = syllabus.disciplineName,
+                                        onValueChange = { value -> editableTimetableSyllabi = editableTimetableSyllabi.replaceAt(index, syllabus.copy(disciplineName = value)) },
+                                        label = { Text("Nome da disciplina") },
+                                        singleLine = true,
+                                        modifier = Modifier.fillMaxWidth()
+                                    )
+                                    Spacer(modifier = Modifier.height(8.dp))
+                                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                        OutlinedTextField(
+                                            value = syllabus.disciplineCode,
+                                            onValueChange = { value -> editableTimetableSyllabi = editableTimetableSyllabi.replaceAt(index, syllabus.copy(disciplineCode = value)) },
+                                            label = { Text("Código") },
+                                            singleLine = true,
+                                            modifier = Modifier.weight(1f)
+                                        )
+                                        OutlinedTextField(
+                                            value = syllabus.term,
+                                            onValueChange = { value -> editableTimetableSyllabi = editableTimetableSyllabi.replaceAt(index, syllabus.copy(term = value)) },
+                                            label = { Text("Período") },
+                                            singleLine = true,
+                                            modifier = Modifier.weight(1f)
+                                        )
+                                    }
+                                    Spacer(modifier = Modifier.height(8.dp))
+                                    OutlinedTextField(
+                                        value = syllabus.professor,
+                                        onValueChange = { value -> editableTimetableSyllabi = editableTimetableSyllabi.replaceAt(index, syllabus.copy(professor = value)) },
+                                        label = { Text("Professor(a)") },
+                                        singleLine = true,
+                                        modifier = Modifier.fillMaxWidth()
+                                    )
+                                    Spacer(modifier = Modifier.height(8.dp))
+                                    OutlinedTextField(
+                                        value = syllabus.classroom,
+                                        onValueChange = { value -> editableTimetableSyllabi = editableTimetableSyllabi.replaceAt(index, syllabus.copy(classroom = value)) },
+                                        label = { Text("Local / Sala de aula") },
+                                        singleLine = true,
+                                        modifier = Modifier.fillMaxWidth()
+                                    )
+                                    Spacer(modifier = Modifier.height(8.dp))
+                                    ImportedScheduleEditor(
+                                        schedule = syllabus.schedule,
+                                        onScheduleChange = { value -> editableTimetableSyllabi = editableTimetableSyllabi.replaceAt(index, syllabus.copy(schedule = value)) }
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+
+                item {
+                    Button(
+                        onClick = { viewModel.confirmAndSaveImportedTimetable(editableTimetableSyllabi) },
+                        modifier = Modifier.fillMaxWidth().testTag("btn_save_all_timetable"),
+                        enabled = editableTimetableSyllabi.isNotEmpty(),
+                        shape = RoundedCornerShape(14.dp),
+                        contentPadding = PaddingValues(16.dp)
+                    ) {
+                        Icon(Icons.Default.Save, contentDescription = null)
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text("Salvar todas as disciplinas", fontWeight = FontWeight.Bold)
+                    }
+                }
+            }
+
+            if (extractedSyllabus != null && !isTimetableReview) {
                 val syllabus = editableSyllabus ?: extractedSyllabus!!
                 val discColor = parseColorHex(syllabus.recommendedColorHex)
+                val existingDiscipline = disciplines.firstOrNull {
+                    syllabus.disciplineCode.isNotBlank() &&
+                        it.code.equals(syllabus.disciplineCode.trim(), ignoreCase = true)
+                } ?: disciplines.firstOrNull {
+                    normalizeDisciplineIdentity(it.name) == normalizeDisciplineIdentity(syllabus.disciplineName)
+                }
+                val classroomConflict = existingDiscipline?.classroom?.isNotBlank() == true &&
+                    syllabus.classroom.isNotBlank() &&
+                    !existingDiscipline.classroom.equals(syllabus.classroom, ignoreCase = true)
 
                 item {
                     Row(
@@ -443,12 +795,49 @@ fun DocumentImportScreen(
                     ) {
                         Text(
                             text = "2. Revisão das Informações Identificadas",
+                            modifier = Modifier
+                                .weight(1f)
+                                .padding(end = 8.dp),
                             fontSize = 17.sp,
-                            fontWeight = FontWeight.Bold
+                            fontWeight = FontWeight.Bold,
+                            maxLines = 2
                         )
 
-                        TextButton(onClick = { viewModel.clearExtractedSyllabus() }) {
-                            Text("Cancelar", color = MaterialTheme.colorScheme.error)
+                        TextButton(
+                            onClick = { viewModel.clearExtractedSyllabus() },
+                            modifier = Modifier.widthIn(min = 84.dp),
+                            contentPadding = PaddingValues(horizontal = 8.dp)
+                        ) {
+                            Text(
+                                text = "Cancelar",
+                                color = MaterialTheme.colorScheme.error,
+                                maxLines = 1,
+                                softWrap = false
+                            )
+                        }
+                    }
+                }
+
+                if (pendingImportDisciplineCount > 1 || syllabus.events.isEmpty()) {
+                    item {
+                        Card(
+                            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.tertiaryContainer),
+                            shape = RoundedCornerShape(14.dp)
+                        ) {
+                            Row(modifier = Modifier.padding(14.dp), verticalAlignment = Alignment.Top) {
+                                Icon(Icons.Default.Info, contentDescription = null, tint = MaterialTheme.colorScheme.onTertiaryContainer)
+                                Spacer(modifier = Modifier.width(10.dp))
+                                Text(
+                                    text = if (pendingImportDisciplineCount > 1) {
+                                        "$pendingImportDisciplineCount disciplinas foram identificadas. Revise e salve cada uma. Quadros de horário podem não informar professor, local e período de aulas; complete os campos vazios manualmente."
+                                    } else {
+                                        "Este documento contém apenas o quadro semanal. Complete manualmente os campos vazios, como professor e local. As aulas poderão ser geradas depois, ao editar a disciplina e informar o período letivo."
+                                    },
+                                    color = MaterialTheme.colorScheme.onTertiaryContainer,
+                                    fontSize = 13.sp,
+                                    lineHeight = 18.sp
+                                )
+                            }
                         }
                     }
                 }
@@ -509,10 +898,51 @@ fun DocumentImportScreen(
                                 modifier = Modifier.fillMaxWidth()
                             )
                             Spacer(modifier = Modifier.height(8.dp))
+                            if (classroomConflict) {
+                                Card(
+                                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer),
+                                    shape = RoundedCornerShape(12.dp)
+                                ) {
+                                    Column(modifier = Modifier.padding(12.dp)) {
+                                        Text(
+                                            "Foi identificada uma sala diferente",
+                                            fontWeight = FontWeight.Bold,
+                                            fontSize = 13.sp,
+                                            color = MaterialTheme.colorScheme.onSecondaryContainer
+                                        )
+                                        Text(
+                                            "Escolha qual local deve ficar cadastrado como sala de aula:",
+                                            fontSize = 12.sp,
+                                            color = MaterialTheme.colorScheme.onSecondaryContainer
+                                        )
+                                        Row(
+                                            modifier = Modifier.fillMaxWidth().clickable { useIdentifiedClassroom = false },
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            RadioButton(selected = !useIdentifiedClassroom, onClick = { useIdentifiedClassroom = false })
+                                            Column {
+                                                Text("Manter sala atual", fontWeight = FontWeight.SemiBold, fontSize = 12.sp)
+                                                Text(existingDiscipline?.classroom.orEmpty(), fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                            }
+                                        }
+                                        Row(
+                                            modifier = Modifier.fillMaxWidth().clickable { useIdentifiedClassroom = true },
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            RadioButton(selected = useIdentifiedClassroom, onClick = { useIdentifiedClassroom = true })
+                                            Column {
+                                                Text("Usar sala identificada no plano", fontWeight = FontWeight.SemiBold, fontSize = 12.sp)
+                                                Text(syllabus.classroom, fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                            }
+                                        }
+                                    }
+                                }
+                                Spacer(modifier = Modifier.height(8.dp))
+                            }
                             OutlinedTextField(
                                 value = syllabus.classroom,
                                 onValueChange = { editableSyllabus = syllabus.copy(classroom = it) },
-                                label = { Text("Local / Sala") },
+                                label = { Text("Local / Sala de aula") },
                                 leadingIcon = { Icon(Icons.Default.Place, contentDescription = null) },
                                 singleLine = true,
                                 modifier = Modifier.fillMaxWidth()
@@ -561,6 +991,25 @@ fun DocumentImportScreen(
                             editableEvents = editableEvents.map { it.copy(isSelected = !allSelected) }
                         }) {
                             Text(if (editableEvents.all { it.isSelected }) "Desmarcar Todos" else "Marcar Todos", fontSize = 12.sp)
+                        }
+                    }
+                }
+
+                item {
+                    Surface(
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(16.dp),
+                        color = MaterialTheme.colorScheme.primaryContainer,
+                        contentColor = MaterialTheme.colorScheme.onPrimaryContainer
+                    ) {
+                        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                            Row(verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                Icon(Icons.Default.FactCheck, contentDescription = null, modifier = Modifier.size(20.dp))
+                                Text("Resumo da análise", fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                            }
+                            Text(summarizeImportEvents(editableEvents), fontSize = 14.sp)
+                            Text("Total identificado nesta disciplina: ${editableEvents.size}", fontSize = 12.sp)
                         }
                     }
                 }
@@ -636,20 +1085,26 @@ fun DocumentImportScreen(
                     val selectedEvents = editableEvents.filter { it.isSelected }
                     Button(
                         onClick = {
-                            if (selectedEvents.isNotEmpty()) {
-                                viewModel.confirmAndSaveImportedEvents(syllabus, selectedEvents)
-                            }
+                            viewModel.confirmAndSaveImportedEvents(
+                                syllabus,
+                                selectedEvents,
+                                replaceExistingClassroom = useIdentifiedClassroom && classroomConflict
+                            )
                         },
                         modifier = Modifier
                             .fillMaxWidth()
                             .testTag("btn_confirm_import"),
-                        enabled = selectedEvents.isNotEmpty() && syllabus.disciplineName.isNotBlank(),
+                        enabled = syllabus.disciplineName.isNotBlank(),
                         shape = RoundedCornerShape(14.dp),
                         contentPadding = PaddingValues(16.dp)
                     ) {
                         Icon(Icons.Default.CalendarMonth, contentDescription = null, modifier = Modifier.size(20.dp))
                         Spacer(modifier = Modifier.width(8.dp))
-                        Text("Confirmar e Adicionar ${selectedEvents.size} Eventos ao Calendário", fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                        Text(
+                            if (selectedEvents.isEmpty()) "Salvar disciplina" else "Confirmar e Adicionar ${selectedEvents.size} Eventos ao Calendário",
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 14.sp
+                        )
                     }
                 }
             }
@@ -880,18 +1335,41 @@ fun DocumentImportScreen(
         val selectedReviewEvents = editableEvents.filter { it.isSelected }
         if (
             activeTab == DocumentImportTab.IMPORT &&
+            !isTimetableReview &&
             reviewSyllabus != null &&
-            reviewSyllabus.disciplineName.isNotBlank() &&
-            selectedReviewEvents.isNotEmpty()
+            reviewSyllabus.disciplineName.isNotBlank()
         ) {
             ExtendedFloatingActionButton(
-                onClick = { viewModel.confirmAndSaveImportedEvents(reviewSyllabus, selectedReviewEvents) },
+                onClick = {
+                    viewModel.confirmAndSaveImportedEvents(
+                        reviewSyllabus,
+                        selectedReviewEvents,
+                        replaceExistingClassroom = useIdentifiedClassroom && classroomConflictFor(
+                            reviewSyllabus,
+                            disciplines
+                        )
+                    )
+                },
                 modifier = Modifier
                     .align(Alignment.BottomEnd)
                     .padding(20.dp)
                     .testTag("fab_confirm_import"),
                 icon = { Icon(Icons.Default.Save, contentDescription = null) },
-                text = { Text("Salvar ${selectedReviewEvents.size} eventos", fontWeight = FontWeight.Bold) }
+                text = {
+                    Text(
+                        if (selectedReviewEvents.isEmpty()) "Salvar disciplina" else "Salvar ${selectedReviewEvents.size} eventos",
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+            )
+        }
+
+        if (activeTab == DocumentImportTab.IMPORT && isTimetableReview && editableTimetableSyllabi.isNotEmpty()) {
+            ExtendedFloatingActionButton(
+                onClick = { viewModel.confirmAndSaveImportedTimetable(editableTimetableSyllabi) },
+                modifier = Modifier.align(Alignment.BottomEnd).padding(20.dp).testTag("fab_save_all_timetable"),
+                icon = { Icon(Icons.Default.Save, contentDescription = null) },
+                text = { Text("Salvar tudo", fontWeight = FontWeight.Bold) }
             )
         }
     }
@@ -985,6 +1463,7 @@ private fun EditImportedEventDialog(
     onDismiss: () -> Unit,
     onSave: (ExtractedEvent) -> Unit
 ) {
+    val dismissKeyboard = com.example.ui.components.keyboardDismissAction()
     var title by remember(event) { mutableStateOf(event.title) }
     var date by remember(event) { mutableStateOf(formatImportDate(event.date)) }
     var time by remember(event) { mutableStateOf(event.time) }
@@ -1042,6 +1521,7 @@ private fun EditImportedEventDialog(
             Button(
                 enabled = title.isNotBlank() && validDate && validTime,
                 onClick = {
+                    dismissKeyboard()
                     onSave(event.copy(title = title.trim(), date = parsedDate!!, time = time, description = description.trim()))
                 }
             ) { Text("Salvar alterações") }
@@ -1051,6 +1531,18 @@ private fun EditImportedEventDialog(
 }
 
 private data class ImportWeekDay(val shortName: String, val fullName: String)
+
+internal fun mergeExistingDisciplineData(
+    extracted: ExtractedSyllabus,
+    existing: Discipline?,
+    events: List<ExtractedEvent> = extracted.events
+): ExtractedSyllabus {
+    val scheduleBase = extracted.schedule.ifBlank { existing?.schedule.orEmpty() }
+    return extracted.copy(
+        classroom = extracted.classroom.ifBlank { existing?.classroom.orEmpty() },
+        schedule = inferScheduleDaysFromClasses(scheduleBase, events)
+    )
+}
 
 private val importWeekDays = listOf(
     ImportWeekDay("SEG", "Segunda"),
@@ -1120,23 +1612,17 @@ internal fun inferScheduleDaysFromClasses(
     }.distinct().sortedBy { importWeekDays.indexOf(it) }
     if (inferredDays.isEmpty()) return schedule
 
-    val normalized = schedule.lowercase(Locale.ROOT)
-    val alreadyRepresented = inferredDays.filter { day ->
-        when (day.shortName) {
-            "SEG" -> normalized.contains("seg")
-            "TER" -> normalized.contains("ter")
-            "QUA" -> normalized.contains("qua")
-            "QUI" -> normalized.contains("qui")
-            "SEX" -> normalized.contains("sex")
-            "SÁB" -> normalized.contains("sáb") || normalized.contains("sab")
-            else -> normalized.contains("dom")
-        }
-    }.toSet()
-    val missingDays = inferredDays.filterNot { it in alreadyRepresented }
-    if (missingDays.isEmpty()) return schedule
-
-    val inferredText = missingDays.joinToString(" e ") { it.fullName }
-    return listOf(inferredText, schedule.trim()).filter { it.isNotBlank() }.joinToString(", ")
+    // When a plan contains dated classes, those dates are the authoritative source
+    // for the active weekdays. Header schedules can include stale or conflicting days.
+    val inferredText = inferredDays.joinToString(" e ") { it.fullName }
+    val times = Regex("\\b(?:[01]?\\d|2[0-3]):[0-5]\\d\\b")
+        .findAll(schedule).map { it.value.padStart(5, '0') }.toList()
+    val timeText = when {
+        times.size >= 2 -> "${times[0]} - ${times[1]}"
+        times.size == 1 -> times[0]
+        else -> ""
+    }
+    return listOf(inferredText, timeText).filter { it.isNotBlank() }.joinToString(", ")
 }
 
 @Composable

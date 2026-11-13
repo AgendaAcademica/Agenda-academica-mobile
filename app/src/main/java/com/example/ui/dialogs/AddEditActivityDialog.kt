@@ -63,6 +63,7 @@ fun AddEditActivityDialog(
     onDismiss: () -> Unit,
     onSave: (AcademicActivity) -> Unit
 ) {
+    val dismissKeyboard = com.example.ui.components.keyboardDismissAction()
     var title by remember { mutableStateOf(initialActivity?.title ?: "") }
     var description by remember { mutableStateOf(initialActivity?.description ?: "") }
     
@@ -465,6 +466,7 @@ fun AddEditActivityDialog(
                 Button(
                     onClick = {
                         if (title.isNotBlank()) {
+                            dismissKeyboard()
                             onSave(
                                 AcademicActivity(
                                     id = initialActivity?.id ?: 0L,

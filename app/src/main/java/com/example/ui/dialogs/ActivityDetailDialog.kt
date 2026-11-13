@@ -36,7 +36,9 @@ fun ActivityDetailDialog(
     onDelete: () -> Unit
 ) {
     var showDatePicker by remember { mutableStateOf(false) }
+    val dismissKeyboard = keyboardDismissAction()
     var showGradeDialog by remember { mutableStateOf(false) }
+    var confirmDelete by remember(activity.id) { mutableStateOf(false) }
     var gradeText by remember(activity.id, activity.grade) { mutableStateOf(activity.grade?.toString() ?: "") }
 
     Dialog(
@@ -188,7 +190,17 @@ fun ActivityDetailDialog(
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
                 Spacer(modifier = Modifier.height(6.dp))
-                StatusSelector(
+                if (activity.activityType == ActivityType.PROVA) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Checkbox(
+                            checked = activity.status == ActivityStatus.CONCLUIDA,
+                            onCheckedChange = { checked ->
+                                onStatusChange(if (checked) ActivityStatus.CONCLUIDA else ActivityStatus.PENDENTE)
+                            }
+                        )
+                        Text("Feita", fontSize = 14.sp)
+                    }
+                } else StatusSelector(
                     status = activity.status,
                     onStatusChange = onStatusChange,
                     availableStatuses = if (activity.activityType == ActivityType.AULA) {
@@ -273,7 +285,9 @@ fun ActivityDetailDialog(
                     }
 
                     IconButton(
-                        onClick = onDelete,
+                        onClick = {
+                            if (activity.activityType == ActivityType.PROVA) confirmDelete = true else onDelete()
+                        },
                         colors = IconButtonDefaults.iconButtonColors(contentColor = MaterialTheme.colorScheme.error)
                     ) {
                         Icon(Icons.Default.Delete, contentDescription = "Excluir")
@@ -281,6 +295,22 @@ fun ActivityDetailDialog(
                 }
             }
         }
+    }
+
+    if (confirmDelete) {
+        AlertDialog(
+            onDismissRequest = { confirmDelete = false },
+            title = { Text("Excluir prova?") },
+            text = { Text("A prova \"${activity.title}\" será excluída. Esta ação não pode ser desfeita.") },
+            confirmButton = {
+                TextButton(onClick = { confirmDelete = false; onDelete() }) {
+                    Text("Excluir", color = MaterialTheme.colorScheme.error)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { confirmDelete = false }) { Text("Cancelar") }
+            }
+        )
     }
 
     if (showDatePicker) {
@@ -341,6 +371,7 @@ fun ActivityDetailDialog(
                     enabled = parsedGrade != null && parsedGrade in 0.0..10.0,
                     onClick = {
                         onUpdate(activity.copy(grade = parsedGrade))
+                        dismissKeyboard()
                         showGradeDialog = false
                     }
                 ) { Text("Salvar nota") }
@@ -351,6 +382,7 @@ fun ActivityDetailDialog(
                         TextButton(onClick = {
                             gradeText = ""
                             onUpdate(activity.copy(grade = null))
+                            dismissKeyboard()
                             showGradeDialog = false
                         }) { Text("Remover") }
                     }

@@ -34,7 +34,8 @@ import androidx.core.content.ContextCompat
 
 @Composable
 fun RemindersCenterScreen(
-    viewModel: AcademicViewModel
+    viewModel: AcademicViewModel,
+    onNavigateToSettings: () -> Unit = {}
 ) {
     val context = LocalContext.current
     val disciplines by viewModel.disciplines.collectAsState()
@@ -68,6 +69,11 @@ fun RemindersCenterScreen(
         contentPadding = PaddingValues(16.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
+        item {
+            TextButton(onClick = onNavigateToSettings) {
+                Text("Voltar às configurações")
+            }
+        }
         // Hero Header
         item {
             Card(

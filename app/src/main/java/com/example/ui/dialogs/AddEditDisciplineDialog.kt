@@ -74,6 +74,7 @@ fun AddEditDisciplineDialog(
     onSave: (Discipline, List<AcademicActivity>) -> Unit
 ) {
     var duplicateError by remember { mutableStateOf(false) }
+    val dismissKeyboard = com.example.ui.components.keyboardDismissAction()
     val context = LocalContext.current
 
     var name by remember { mutableStateOf(initialDiscipline?.name ?: "") }
@@ -613,6 +614,7 @@ fun AddEditDisciplineDialog(
 
                             duplicateError = isDuplicate
                             if (!isDuplicate) {
+                                dismissKeyboard()
                                 onSave(disciplineToSave, generatedClasses)
                             }
                         }

@@ -11,6 +11,7 @@ import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.isSystemInDarkTheme
@@ -30,6 +31,7 @@ import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import com.example.data.model.AcademicActivity
 import com.example.data.model.Discipline
+import com.example.data.auth.AuthState
 import com.example.ui.dialogs.ActivityDetailDialog
 import com.example.ui.dialogs.AddEditActivityDialog
 import com.example.ui.dialogs.AddEditDisciplineDialog
@@ -37,10 +39,12 @@ import com.example.ui.navigation.Screen
 import com.example.ui.screens.*
 import com.example.ui.theme.MyApplicationTheme
 import com.example.ui.viewmodel.AcademicViewModel
+import com.example.ui.viewmodel.AuthViewModel
 import com.example.widget.AcademicDayAppWidgetProvider
 
 class MainActivity : ComponentActivity() {
     private val viewModel: AcademicViewModel by viewModels()
+    private val authViewModel: AuthViewModel by viewModels()
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -57,17 +61,52 @@ class MainActivity : ComponentActivity() {
                     window.navigationBarColor = navigationBarColor
                     WindowCompat.getInsetsController(window, window.decorView).isAppearanceLightNavigationBars = !darkTheme
                 }
-                MainApp(
+                AcademicAgendaRoot(
                     viewModel = viewModel,
+                    authViewModel = authViewModel,
                     isDarkTheme = darkTheme,
                     onToggleTheme = {
-                        darkTheme = !darkTheme
-                        preferences.edit().putBoolean("dark_theme", darkTheme).apply()
-                        AcademicDayAppWidgetProvider.updateAllWidgets(this@MainActivity)
-                    }
-                )
+                            darkTheme = !darkTheme
+                            preferences.edit().putBoolean("dark_theme", darkTheme).apply()
+                            AcademicDayAppWidgetProvider.updateAllWidgets(this@MainActivity)
+                        }
+                    )
             }
         }
+    }
+}
+
+@Composable
+private fun AcademicAgendaRoot(
+    viewModel: AcademicViewModel,
+    authViewModel: AuthViewModel,
+    isDarkTheme: Boolean,
+    onToggleTheme: () -> Unit
+) {
+    val authState by authViewModel.state.collectAsState()
+    val isSubmitting by authViewModel.isSubmitting.collectAsState()
+    val authMessage by authViewModel.message.collectAsState()
+
+    when (authState) {
+        AuthState.Loading -> Box(Modifier.fillMaxSize(), contentAlignment = androidx.compose.ui.Alignment.Center) {
+            CircularProgressIndicator()
+        }
+        AuthState.SignedOut, AuthState.ConfigurationRequired -> LoginScreen(
+            isSubmitting = isSubmitting,
+            message = authMessage,
+            configurationRequired = authState == AuthState.ConfigurationRequired,
+            onSignIn = authViewModel::signIn,
+            onRegister = authViewModel::register,
+            onResetPassword = authViewModel::resetPassword,
+            onClearMessage = authViewModel::clearMessage
+        )
+        is AuthState.SignedIn -> MainApp(
+            viewModel = viewModel,
+            isDarkTheme = isDarkTheme,
+            onToggleTheme = onToggleTheme,
+            onSignOut = authViewModel::signOut,
+            accountEmail = (authState as AuthState.SignedIn).user.email
+        )
     }
 }
 
@@ -75,7 +114,9 @@ class MainActivity : ComponentActivity() {
 fun MainApp(
     viewModel: AcademicViewModel,
     isDarkTheme: Boolean,
-    onToggleTheme: () -> Unit
+    onToggleTheme: () -> Unit,
+    onSignOut: () -> Unit = {},
+    accountEmail: String? = null
 ) {
     val navController = rememberNavController()
     val navBackStackEntry by navController.currentBackStackEntryAsState()
@@ -108,8 +149,7 @@ fun MainApp(
         Screen.Dashboard,
         Screen.Disciplines,
         Screen.ImportDocument,
-        Screen.WidgetStudio,
-        Screen.Reminders
+        Screen.Settings
     )
 
     val navigateToTab: (String) -> Unit = { route ->
@@ -134,7 +174,8 @@ fun MainApp(
                     tonalElevation = 0.dp
                 ) {
                     bottomNavItems.forEach { screen ->
-                        val isSelected = currentRoute == screen.route
+                        val isSelected = currentRoute == screen.route ||
+                            (screen == Screen.Settings && currentRoute in listOf(Screen.WidgetStudio.route, Screen.Reminders.route))
                         NavigationBarItem(
                             icon = {
                                 Icon(
@@ -177,12 +218,11 @@ fun MainApp(
             composable(Screen.Dashboard.route) {
                 DashboardScreen(
                     viewModel = viewModel,
-                    isDarkTheme = isDarkTheme,
-                    onToggleTheme = onToggleTheme,
                     onNavigateToImport = { navigateToTab(Screen.ImportDocument.route) },
                     onNavigateToDisciplines = { navigateToTab(Screen.Disciplines.route) },
                     onNavigateToReminders = { navigateToTab(Screen.Reminders.route) },
                     onNavigateToWidget = { navigateToTab(Screen.WidgetStudio.route) },
+                    onNavigateToSettings = { navigateToTab(Screen.Settings.route) },
                     onOpenAddActivity = {
                         preselectedDisciplineIdForNewActivity = null
                         activityToEdit = null
@@ -219,16 +259,23 @@ fun MainApp(
                 )
             }
 
+            composable(Screen.Settings.route) {
+                SettingsScreen(viewModel, isDarkTheme, onToggleTheme,
+                    onNavigateToReminders = { navController.navigate(Screen.Reminders.route) },
+                    onNavigateToWidget = { navController.navigate(Screen.WidgetStudio.route) },
+                    onSignOut = onSignOut, accountEmail = accountEmail)
+            }
             composable(Screen.WidgetStudio.route) {
                 WidgetStudioScreen(
                     viewModel = viewModel,
                     isDarkTheme = isDarkTheme,
-                    onNavigateToHome = { navigateToTab(Screen.Dashboard.route) }
+                    onNavigateToHome = { navigateToTab(Screen.Settings.route) }
                 )
             }
 
             composable(Screen.Reminders.route) {
-                RemindersCenterScreen(viewModel = viewModel)
+                RemindersCenterScreen(viewModel = viewModel,
+                    onNavigateToSettings = { navigateToTab(Screen.Settings.route) })
             }
         }
     }

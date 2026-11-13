@@ -12,6 +12,8 @@ import androidx.compose.material.icons.outlined.Notifications
 import androidx.compose.material.icons.outlined.School
 import androidx.compose.material.icons.outlined.Widgets
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.outlined.Settings
 
 sealed class Screen(
     val route: String,
@@ -19,6 +21,7 @@ sealed class Screen(
     val selectedIcon: ImageVector,
     val unselectedIcon: ImageVector
 ) {
+    object Settings : Screen("settings", "Configurações", Icons.Filled.Settings, Icons.Outlined.Settings)
     object Dashboard : Screen("dashboard", "Atividades", Icons.Filled.Dashboard, Icons.Outlined.Dashboard)
     object Disciplines : Screen("disciplines", "Disciplinas", Icons.Filled.School, Icons.Outlined.School)
     object ImportDocument : Screen("import", "Importar IA", Icons.Filled.DocumentScanner, Icons.Outlined.DocumentScanner)

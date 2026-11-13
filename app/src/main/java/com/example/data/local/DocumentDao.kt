@@ -6,6 +6,9 @@ import kotlinx.coroutines.flow.Flow
 
 @Dao
 interface DocumentDao {
+    @Query("DELETE FROM academic_documents")
+    suspend fun deleteAll()
+
     @Query("SELECT * FROM academic_documents ORDER BY importedAt DESC")
     fun getAllDocuments(): Flow<List<AcademicDocument>>
 

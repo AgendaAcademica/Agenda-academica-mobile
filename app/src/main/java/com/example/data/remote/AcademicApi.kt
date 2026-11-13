@@ -27,15 +27,21 @@ interface AcademicApi {
 
 @JsonClass(generateAdapter = true)
 data class ExtractDocumentResponse(
-    val data: ExtractedSyllabusDto,
+    val data: ExtractedDocumentDto,
     val meta: ExtractDocumentMetaDto
+)
+
+@JsonClass(generateAdapter = true)
+data class ExtractedDocumentDto(
+    val disciplines: List<ExtractedSyllabusDto> = emptyList()
 )
 
 @JsonClass(generateAdapter = true)
 data class ExtractDocumentMetaDto(
     val fileName: String,
     val fileSize: Long,
-    val eventsCount: Int
+    val eventsCount: Int,
+    val disciplinesCount: Int = 1
 )
 
 @JsonClass(generateAdapter = true)
@@ -62,7 +68,7 @@ data class ExtractedSyllabusDto(
             disciplineCode = disciplineCode,
             professor = professor,
             term = term,
-            classroom = classroom,
+            classroom = compactClassroom(classroom),
             schedule = schedule,
             recommendedColorHex = recommendedColorHex,
             events = events.map { dto ->
@@ -99,16 +105,41 @@ data class ExtractedEventDto(
     )
 }
 
+internal fun compactClassroom(value: String): String {
+    val text = value.trim().replace(Regex("\\s+"), " ")
+    val roomPattern = Regex(
+        """\b(sala(?:\s+de\s+aula)?|(?:laborat[oó]rio|lab)(?:\.?\s*(?:de\s+)?(?:comput[\p{L}]*|inform[\p{L}]*)\.?(?:\s+[IVX]+\.?)?)?)\.?\s*(?:n[º°o]?\.?\s*)?[:\-]?\s*(\d+[A-Za-z]?(?:-[A-Za-z])?)(?![\p{L}\d])""",
+        RegexOption.IGNORE_CASE
+    )
+    val matches = roomPattern.findAll(text).toList()
+    // Preserve unknown locations and lists such as "Salas 241 e 242".
+    if (matches.isEmpty()) return text
+    if (matches.any { match ->
+        Regex("""^\s*(?:/|,|e|ou)\s*\d""", RegexOption.IGNORE_CASE)
+            .containsMatchIn(text.substring(match.range.last + 1))
+    }) return text
+    return matches.map { match ->
+        val kind = if (match.groupValues[1].startsWith("lab", ignoreCase = true)) "Lab" else "Sala de aula"
+        "$kind ${match.groupValues[2]}"
+    }.distinct().joinToString(" / ")
+}
+
 object AcademicApiFactory {
     fun create(): AcademicApi {
         val logging = HttpLoggingInterceptor().apply {
+            redactHeader("Authorization")
             level = if (BuildConfig.DEBUG) HttpLoggingInterceptor.Level.BASIC else HttpLoggingInterceptor.Level.NONE
         }
         val client = OkHttpClient.Builder()
+            .addInterceptor(FirebaseTokenInterceptor())
             .addInterceptor(logging)
+            .followRedirects(false)
+            .followSslRedirects(false)
             .connectTimeout(30, TimeUnit.SECONDS)
-            .readTimeout(90, TimeUnit.SECONDS)
-            .writeTimeout(90, TimeUnit.SECONDS)
+            // A primeira análise de um PDF pode levar mais tempo enquanto o
+            // provedor processa e armazena o resultado em cache.
+            .readTimeout(180, TimeUnit.SECONDS)
+            .writeTimeout(120, TimeUnit.SECONDS)
             .build()
         val moshi = Moshi.Builder().add(KotlinJsonAdapterFactory()).build()
         val baseUrl = BuildConfig.BACKEND_BASE_URL.trim().let {

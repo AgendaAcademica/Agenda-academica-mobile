@@ -37,4 +37,15 @@ class DashboardCalendarFilterTest {
     fun `returns only activities from selected discipline`() {
         assertEquals(listOf(activities.first()), filterCalendarActivities(activities, 10))
     }
+
+    @Test
+    fun `calendar week starts on sunday and ends on saturday`() {
+        val days = generateCalendarDays(2026, 7, 30, 2026, 8, 12)
+        val week = calendarWeekFor(days, "2026-09-08")
+
+        assertEquals("DOM", week.first().dayLabel)
+        assertEquals("2026-09-06", week.first().dateStr)
+        assertEquals("SÁB", week.last().dayLabel)
+        assertEquals("2026-09-12", week.last().dateStr)
+    }
 }

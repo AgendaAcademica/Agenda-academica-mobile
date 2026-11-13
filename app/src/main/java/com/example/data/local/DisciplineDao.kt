@@ -6,6 +6,9 @@ import kotlinx.coroutines.flow.Flow
 
 @Dao
 interface DisciplineDao {
+    @Query("DELETE FROM disciplines")
+    suspend fun deleteAll()
+
     @Query("SELECT * FROM disciplines ORDER BY name ASC")
     fun getAllDisciplines(): Flow<List<Discipline>>
 
@@ -14,6 +17,9 @@ interface DisciplineDao {
 
     @Query("SELECT * FROM disciplines WHERE name = :name LIMIT 1")
     suspend fun getDisciplineByName(name: String): Discipline?
+
+    @Query("SELECT * FROM disciplines WHERE code = :code COLLATE NOCASE AND code != '' LIMIT 1")
+    suspend fun getDisciplineByCode(code: String): Discipline?
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertDiscipline(discipline: Discipline): Long

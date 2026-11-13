@@ -3,6 +3,7 @@ package com.example.data.repository
 import android.content.Context
 import android.net.Uri
 import androidx.room.withTransaction
+import com.example.ai.ExtractedEvent
 import com.example.ai.ExtractedSyllabus
 import com.example.data.local.AppDatabase
 import com.example.data.model.AcademicActivity
@@ -20,6 +21,10 @@ import kotlinx.coroutines.flow.first
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.MultipartBody
 import okhttp3.RequestBody.Companion.toRequestBody
+import java.text.SimpleDateFormat
+import java.text.Normalizer
+import java.util.Calendar
+import java.util.Locale
 
 data class DisciplineWithStats(
     val discipline: Discipline,
@@ -30,6 +35,70 @@ data class DisciplineWithStats(
     val progressFraction: Float
         get() = if (totalActivities > 0) completedActivities.toFloat() / totalActivities else 0f
 }
+
+internal fun generateTimetableEvents(
+    syllabus: ExtractedSyllabus,
+    createdDateIso: String
+): List<ExtractedEvent> {
+    val normalized = syllabus.schedule.lowercase(Locale.ROOT)
+    val selectedDays = buildSet {
+        if (Regex("\\b(seg|segunda)").containsMatchIn(normalized)) add(Calendar.MONDAY)
+        if (Regex("\\b(ter|terça|terca)").containsMatchIn(normalized)) add(Calendar.TUESDAY)
+        if (Regex("\\b(qua|quarta)").containsMatchIn(normalized)) add(Calendar.WEDNESDAY)
+        if (Regex("\\b(qui|quinta)").containsMatchIn(normalized)) add(Calendar.THURSDAY)
+        if (Regex("\\b(sex|sexta)").containsMatchIn(normalized)) add(Calendar.FRIDAY)
+        if (Regex("\\b(sáb|sab|sábado|sabado)").containsMatchIn(normalized)) add(Calendar.SATURDAY)
+        if (Regex("\\b(dom|domingo)").containsMatchIn(normalized)) add(Calendar.SUNDAY)
+    }
+    val times = Regex("\\b(?:[01]?\\d|2[0-3]):[0-5]\\d\\b")
+        .findAll(syllabus.schedule)
+        .map { it.value.padStart(5, '0') }
+        .toList()
+    if (selectedDays.isEmpty() || times.isEmpty()) return emptyList()
+
+    val format = SimpleDateFormat("yyyy-MM-dd", Locale.US).apply { isLenient = false }
+    val start = runCatching { format.parse(createdDateIso) }.getOrNull() ?: return emptyList()
+    val endIso = academicTermEndDate(syllabus.term, createdDateIso)
+    val end = runCatching { format.parse(endIso) }.getOrNull() ?: return emptyList()
+    val current = Calendar.getInstance().apply { time = start }
+    val finish = Calendar.getInstance().apply { time = end }
+    val timeRange = if (times.size >= 2) "${times[0]} - ${times[1]}" else times[0]
+    val result = mutableListOf<ExtractedEvent>()
+    var number = 1
+
+    while (!current.after(finish)) {
+        if (current.get(Calendar.DAY_OF_WEEK) in selectedDays) {
+            result += ExtractedEvent(
+                title = "Aula #$number — ${syllabus.disciplineName}",
+                date = format.format(current.time),
+                time = times[0],
+                activityType = ActivityType.AULA,
+                priority = Priority.BAIXA,
+                description = "Horário previsto: $timeRange. Aula criada sem base de plano acadêmico."
+            )
+            number++
+        }
+        current.add(Calendar.DAY_OF_MONTH, 1)
+    }
+    return result
+}
+
+internal fun academicTermEndDate(term: String, referenceDateIso: String): String {
+    val referenceParts = referenceDateIso.split("-")
+    val referenceYear = referenceParts.getOrNull(0)?.toIntOrNull() ?: Calendar.getInstance().get(Calendar.YEAR)
+    val referenceMonth = referenceParts.getOrNull(1)?.toIntOrNull() ?: 1
+    val match = Regex("(20\\d{2}).*?([12])(?:\\D|$)").find(term)
+    val year = match?.groupValues?.getOrNull(1)?.toIntOrNull() ?: referenceYear
+    val semester = match?.groupValues?.getOrNull(2)?.toIntOrNull() ?: if (referenceMonth <= 6) 1 else 2
+    return if (semester == 1) "%04d-06-30".format(year) else "%04d-12-15".format(year)
+}
+
+internal fun normalizeDisciplineIdentity(value: String): String = Normalizer
+    .normalize(value, Normalizer.Form.NFD)
+    .replace(Regex("\\p{M}+"), "")
+    .lowercase(Locale.ROOT)
+    .replace(Regex("[^a-z0-9]+"), " ")
+    .trim()
 
 data class DashboardOverview(
     val todayActivities: List<ActivityWithDiscipline>,
@@ -49,7 +118,8 @@ data class ActivityWithDiscipline(
 data class DocumentUpload(
     val uri: Uri,
     val fileName: String,
-    val mimeType: String
+    val mimeType: String,
+    val sizeBytes: Long = 0
 )
 
 class AcademicRepository(
@@ -70,7 +140,31 @@ class AcademicRepository(
     val allActivities: Flow<List<AcademicActivity>> = activityDao.getAllActivities()
     val allDocuments: Flow<List<AcademicDocument>> = documentDao.getAllDocuments()
 
-    suspend fun extractDocuments(documents: List<DocumentUpload>): ExtractedSyllabus {
+    suspend fun fingerprintDocuments(documents: List<DocumentUpload>): String = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+        val hashes = documents.map { document ->
+            val digest = java.security.MessageDigest.getInstance("SHA-256")
+            context.contentResolver.openInputStream(document.uri)?.use { input ->
+                val buffer = ByteArray(8192)
+                var count = input.read(buffer)
+                while (count != -1) {
+                    digest.update(buffer, 0, count)
+                    count = input.read(buffer)
+                }
+            } ?: error("Não foi possível abrir o documento.")
+            digest.digest().joinToString("") { "%02x".format(it) }
+        }
+        hashes.sorted().joinToString(":")
+    }
+
+    suspend fun isRepeatedImport(syllabus: ExtractedSyllabus, fingerprint: String): Boolean {
+        val discipline = findImportedDiscipline(syllabus) ?: return false
+        return documentDao.getDocumentsByDiscipline(discipline.id).first().any {
+            if (it.fileFingerprint.isNotBlank() && fingerprint.isNotBlank()) it.fileFingerprint == fingerprint
+            else normalizeDisciplineIdentity(it.title) == normalizeDisciplineIdentity(syllabus.documentTitle)
+        }
+    }
+
+    suspend fun extractDocuments(documents: List<DocumentUpload>): List<ExtractedSyllabus> {
         require(documents.isNotEmpty()) { "Selecione pelo menos um arquivo." }
         require(documents.size <= 10) { "Selecione no máximo 10 imagens." }
         require(documents.size == 1 || documents.all { it.mimeType.startsWith("image/") }) {
@@ -91,80 +185,147 @@ class AcademicRepository(
             val body = bytes.toRequestBody(document.mimeType.toMediaType())
             MultipartBody.Part.createFormData(if (documents.size == 1) "file" else "files", safeName, body)
         }
-        return api.extractDocuments(parts).data.toDomain()
+        return api.extractDocuments(parts).data.disciplines.map { it.toDomain() }
     }
 
     suspend fun saveImportedSyllabus(
         syllabus: ExtractedSyllabus,
-        selectedEvents: List<com.example.ai.ExtractedEvent>
+        selectedEvents: List<com.example.ai.ExtractedEvent>,
+        withoutAcademicPlan: Boolean = false,
+        replaceExistingClassroom: Boolean = false,
+        fileFingerprint: String = "",
+        replaceExistingActivities: Boolean = false
     ): Long {
-        // Find existing discipline or create new one
-        var discipline = disciplineDao.getDisciplineByName(syllabus.disciplineName)
-        val disciplineId = if (discipline != null) {
-            // Update details if missing
-            val updated = discipline.copy(
-                professor = if (discipline.professor.isBlank()) syllabus.professor else discipline.professor,
-                classroom = if (discipline.classroom.isBlank()) syllabus.classroom else discipline.classroom,
-                schedule = if (discipline.schedule.isBlank()) syllabus.schedule else discipline.schedule,
-                term = syllabus.term
-            )
-            disciplineDao.updateDiscipline(updated)
-            discipline.id
-        } else {
-            val color = nextAvailableDisciplineColor(syllabus.recommendedColorHex)
-            disciplineDao.insertDiscipline(
-                Discipline(
-                    name = syllabus.disciplineName,
-                    code = syllabus.disciplineCode,
-                    professor = syllabus.professor,
-                    classroom = syllabus.classroom,
-                    schedule = syllabus.schedule,
-                    term = syllabus.term,
-                    colorHex = color,
-                    syllabusNotes = "Importado automaticamente via análise inteligente de documento."
+        var added = emptyList<AcademicActivity>()
+        var ids = emptyList<Long>()
+        var removed = emptyList<AcademicActivity>()
+        val savedId = database.withTransaction {
+            // Match schedules and later syllabus imports to the same discipline.
+            val discipline = findImportedDiscipline(syllabus)
+            val disciplineId = if (discipline != null) {
+                val updated = discipline.copy(
+                    name = syllabus.disciplineName.ifBlank { discipline.name },
+                    code = syllabus.disciplineCode.ifBlank { discipline.code },
+                    professor = syllabus.professor.ifBlank { discipline.professor },
+                    // O comprovante de matrícula é a fonte mais confiável para a sala de aula.
+                    // Planos podem trazer uma sala de atendimento, que não deve sobrescrevê-la.
+                    classroom = if (withoutAcademicPlan) {
+                        syllabus.classroom.ifBlank { discipline.classroom }
+                    } else if (replaceExistingClassroom && syllabus.classroom.isNotBlank()) {
+                        syllabus.classroom
+                    } else {
+                        discipline.classroom.ifBlank { syllabus.classroom }
+                    },
+                    schedule = syllabus.schedule.ifBlank { discipline.schedule },
+                    term = syllabus.term.ifBlank { discipline.term },
+                    syllabusNotes = if (withoutAcademicPlan) discipline.syllabusNotes else
+                        "Informações atualizadas automaticamente a partir do plano de ensino."
                 )
-            )
+                disciplineDao.updateDiscipline(updated)
+                discipline.id
+            } else {
+                val color = nextAvailableDisciplineColor(syllabus.recommendedColorHex)
+                disciplineDao.insertDiscipline(
+                    Discipline(
+                        name = syllabus.disciplineName,
+                        code = syllabus.disciplineCode,
+                        professor = syllabus.professor,
+                        classroom = syllabus.classroom,
+                        schedule = syllabus.schedule,
+                        term = syllabus.term,
+                        colorHex = color,
+                        syllabusNotes = if (withoutAcademicPlan) {
+                            "Disciplina importada de um quadro de horário ou comprovante de matrícula, sem base de plano acadêmico."
+                        } else {
+                            "Importado automaticamente via análise inteligente de documento."
+                        }
+                    )
+                )
+            }
+
+            // Insert activities
+            val scheduleStartTime = Regex("\\b(?:[01]?\\d|2[0-3]):[0-5]\\d\\b")
+                .find(syllabus.schedule)
+                ?.value
+                ?.padStart(5, '0')
+                .orEmpty()
+            val activitiesToInsert = selectedEvents.map { event ->
+                AcademicActivity(
+                    disciplineId = disciplineId,
+                    title = event.title,
+                    description = event.description,
+                    activityType = event.activityType,
+                    date = event.date,
+                    time = event.time.ifBlank { scheduleStartTime },
+                    dueDate = event.dueDate ?: if (event.activityType == ActivityType.TRABALHO || event.activityType == ActivityType.PROJETO) event.date else null,
+                    priority = event.priority,
+                    status = ActivityStatus.PENDENTE,
+                    sourceDocument = syllabus.documentTitle,
+                    notes = if (withoutAcademicPlan) {
+                        "Aula criada a partir do quadro de horário ou comprovante de matrícula, sem base de plano acadêmico."
+                    } else {
+                        "Identificado automaticamente do plano de ensino."
+                    }
+                )
+            }
+
+            val existing = activityDao.getActivitiesByDiscipline(disciplineId).first()
+            removed = if (replaceExistingActivities) existing else if (!withoutAcademicPlan && selectedEvents.any { it.activityType == ActivityType.AULA }) {
+                existing.filter { it.activityType == ActivityType.AULA &&
+                    (it.sourceDocument == "Horário das Aulas" || it.notes.contains("sem base de plano acadêmico")) }
+            } else emptyList()
+            added = uniqueImportedActivities(existing.filter { item -> removed.none { it.id == item.id } }, activitiesToInsert)
+            if (removed.isNotEmpty()) activityDao.deleteActivitiesByIds(removed.map { it.id })
+            ids = if (added.isEmpty()) emptyList() else activityDao.insertActivities(added)
+            if (added.isNotEmpty() || discipline == null || replaceExistingActivities) {
+                // Insert document record
+                documentDao.insertDocument(
+                    AcademicDocument(
+                        title = syllabus.documentTitle,
+                        fileFingerprint = fileFingerprint,
+                        fileName = "${syllabus.disciplineName.replace(" ", "_")}_2026.pdf",
+                        disciplineId = disciplineId,
+                        parsedSummary = if (withoutAcademicPlan) {
+                            "${added.size} aulas criadas a partir dos horários do documento, sem base de plano acadêmico"
+                        } else {
+                            "${added.size} eventos e compromissos importados"
+                        },
+                        itemsExtractedCount = added.size
+                    )
+                )
+
+            }
+            disciplineId
         }
-
-        // Insert document record
-        val docId = documentDao.insertDocument(
-            AcademicDocument(
-                title = syllabus.documentTitle,
-                fileName = "${syllabus.disciplineName.replace(" ", "_")}_2026.pdf",
-                disciplineId = disciplineId,
-                parsedSummary = "${selectedEvents.size} eventos e compromissos importados",
-                itemsExtractedCount = selectedEvents.size
-            )
-        )
-
-        // Insert activities
-        val scheduleStartTime = Regex("\\b(?:[01]?\\d|2[0-3]):[0-5]\\d\\b")
-            .find(syllabus.schedule)
-            ?.value
-            ?.padStart(5, '0')
-            .orEmpty()
-        val activitiesToInsert = selectedEvents.map { event ->
-            AcademicActivity(
-                disciplineId = disciplineId,
-                title = event.title,
-                description = event.description,
-                activityType = event.activityType,
-                date = event.date,
-                time = event.time.ifBlank { scheduleStartTime },
-                dueDate = event.dueDate ?: if (event.activityType == ActivityType.TRABALHO || event.activityType == ActivityType.PROJETO) event.date else null,
-                priority = event.priority,
-                status = ActivityStatus.PENDENTE,
-                sourceDocument = syllabus.documentTitle,
-                notes = "Identificado automaticamente do plano de ensino."
-            )
-        }
-
-        val insertedIds = activityDao.insertActivities(activitiesToInsert)
-        activitiesToInsert.zip(insertedIds).forEach { (activity, id) ->
-            AcademicReminderScheduler.schedule(context, activity.copy(id = id), disciplineDao.getDisciplineById(disciplineId))
+        removed.forEach { AcademicReminderScheduler.cancel(context, it.id) }
+        added.zip(ids).forEach { (activity, id) ->
+            AcademicReminderScheduler.schedule(context, activity.copy(id = id), disciplineDao.getDisciplineById(savedId))
         }
         AcademicDayAppWidgetProvider.updateAllWidgets(context)
-        return disciplineId
+        return savedId
+    }
+
+    private suspend fun findImportedDiscipline(syllabus: ExtractedSyllabus): Discipline? {
+        if (syllabus.disciplineCode.isNotBlank()) {
+            disciplineDao.getDisciplineByCode(syllabus.disciplineCode.trim())?.let { return it }
+        }
+        disciplineDao.getDisciplineByName(syllabus.disciplineName)?.let { return it }
+        val normalizedName = normalizeDisciplineIdentity(syllabus.disciplineName)
+        if (normalizedName.isBlank()) return null
+        return disciplineDao.getAllDisciplines().first().firstOrNull {
+            normalizeDisciplineIdentity(it.name) == normalizedName
+        }
+    }
+
+    suspend fun saveImportedTimetable(syllabi: List<ExtractedSyllabus>, createdDateIso: String, fileFingerprint: String = "", replaceRepeated: Boolean = false): Int {
+        var totalClasses = 0
+        syllabi.forEach { syllabus ->
+            val classes = generateTimetableEvents(syllabus, createdDateIso)
+            saveImportedSyllabus(syllabus, classes, withoutAcademicPlan = true, fileFingerprint = fileFingerprint,
+                replaceExistingActivities = replaceRepeated && isRepeatedImport(syllabus, fileFingerprint))
+            totalClasses += classes.size
+        }
+        return totalClasses
     }
 
     suspend fun insertDiscipline(discipline: Discipline): Long {
@@ -274,6 +435,19 @@ class AcademicRepository(
             ?: disciplineColorPalette[usedColors.size % disciplineColorPalette.size]
     }
 
+    suspend fun clearAcademicData() {
+        val removed = database.withTransaction {
+            val activities = activityDao.getAllActivities().first()
+            activityDao.deleteAll()
+            documentDao.deleteAll()
+            disciplineDao.deleteAll()
+            activities
+        }
+        removed.forEach { AcademicReminderScheduler.cancel(context, it.id) }
+        androidx.core.app.NotificationManagerCompat.from(context).cancelAll()
+        AcademicDayAppWidgetProvider.updateAllWidgets(context)
+    }
+
     suspend fun deleteDiscipline(disciplineId: Long) {
         disciplineDao.deleteDisciplineById(disciplineId)
         AcademicDayAppWidgetProvider.updateAllWidgets(context)
@@ -322,4 +496,13 @@ class AcademicRepository(
             AcademicReminderScheduler.schedule(context, activity, activity.disciplineId?.let(disciplineMap::get))
         }
     }
+}
+
+internal fun uniqueImportedActivities(existing: List<AcademicActivity>, incoming: List<AcademicActivity>): List<AcademicActivity> {
+    fun key(a: AcademicActivity): List<Any?> = listOf(
+        a.disciplineId, a.activityType, a.originalDate ?: a.date, a.time.trim().padStart(5, '0'),
+        if (a.activityType == ActivityType.AULA) "" else normalizeDisciplineIdentity(a.title)
+    )
+    val seen = existing.map(::key).toMutableSet()
+    return incoming.filter { seen.add(key(it)) }
 }

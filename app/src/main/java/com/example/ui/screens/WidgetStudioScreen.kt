@@ -19,6 +19,7 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -48,7 +49,6 @@ fun WidgetStudioScreen(
 
     val disciplinesMap = disciplines.associateBy { it.id }
 
-    var maxItems by remember(widgetSettings) { mutableStateOf(widgetSettings.maxItems) }
     var showOnlyPending by remember(widgetSettings) { mutableStateOf(widgetSettings.showOnlyPending) }
     var showClasses by remember(widgetSettings) { mutableStateOf(widgetSettings.showClasses) }
     var showTimes by remember(widgetSettings) { mutableStateOf(widgetSettings.showTimes) }
@@ -146,7 +146,7 @@ fun WidgetStudioScreen(
                                 ) {
                                     Icon(
                                         Icons.AutoMirrored.Filled.ArrowBack,
-                                        contentDescription = "Voltar ao Início",
+                                        contentDescription = "Voltar às configurações",
                                         tint = Color.White,
                                         modifier = Modifier.size(18.dp)
                                     )
@@ -168,9 +168,9 @@ fun WidgetStudioScreen(
                                 contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp),
                                 modifier = Modifier.height(32.dp)
                             ) {
-                                Icon(Icons.Default.Home, contentDescription = null, modifier = Modifier.size(14.dp))
+                                Icon(Icons.Default.Settings, contentDescription = null, modifier = Modifier.size(14.dp))
                                 Spacer(modifier = Modifier.width(4.dp))
-                                Text("Início", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                                Text("Configurações", fontSize = 12.sp, fontWeight = FontWeight.Bold)
                             }
                         }
 
@@ -291,14 +291,16 @@ fun WidgetStudioScreen(
                         }
                     } else {
                         Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                            previewActivities.take(maxItems).forEach { act ->
+                            previewActivities.forEach { act ->
                                 val disc = disciplinesMap[act.disciplineId]
                                 val discColor = parseColorHex(disc?.colorHex ?: "#2563EB")
 
                                 Surface(
                                     color = widgetItemBackground,
                                     shape = RoundedCornerShape(10.dp),
-                                    modifier = Modifier.fillMaxWidth()
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .alpha(if (act.status == ActivityStatus.CANCELADA) 0.55f else 1f)
                                 ) {
                                     Row(
                                         modifier = Modifier.padding(10.dp),
@@ -373,35 +375,16 @@ fun WidgetStudioScreen(
                 colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
             ) {
                 Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                    // Max items
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Column {
-                            Text("Quantidade de Atividades", fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
-                            Text("Máximo de itens no widget", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            Text("Quantidade de atividades", fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
+                            Text("Automática: mostra todos os compromissos do dia", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         }
-
-                        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                            listOf(2, 3, 5).forEach { count ->
-                                val isSelected = maxItems == count
-                                Surface(
-                                    shape = RoundedCornerShape(8.dp),
-                                    color = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceVariant,
-                                    modifier = Modifier.clickable { maxItems = count }
-                                ) {
-                                    Text(
-                                        text = "$count",
-                                        color = if (isSelected) Color.White else MaterialTheme.colorScheme.onSurface,
-                                        fontWeight = FontWeight.Bold,
-                                        fontSize = 13.sp,
-                                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
-                                    )
-                                }
-                            }
-                        }
+                        Icon(Icons.Default.UnfoldMore, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
                     }
 
                     HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
@@ -499,7 +482,7 @@ fun WidgetStudioScreen(
                     onClick = {
                         viewModel.updateWidgetSettings(
                             WidgetSettings(
-                                maxItems = maxItems,
+                                maxItems = widgetSettings.maxItems,
                                 showOnlyPending = showOnlyPending,
                                 showClasses = showClasses,
                                 showTimes = showTimes,
@@ -524,9 +507,9 @@ fun WidgetStudioScreen(
                     shape = RoundedCornerShape(14.dp),
                     contentPadding = PaddingValues(14.dp)
                 ) {
-                    Icon(Icons.Default.Home, contentDescription = null, modifier = Modifier.size(18.dp))
+                    Icon(Icons.Default.Settings, contentDescription = null, modifier = Modifier.size(18.dp))
                     Spacer(modifier = Modifier.width(8.dp))
-                    Text("Ir para a Tela Inicial", fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                    Text("Voltar às configurações", fontWeight = FontWeight.Bold, fontSize = 14.sp)
                 }
             }
         }
