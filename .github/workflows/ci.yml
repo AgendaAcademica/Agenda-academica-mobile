@@ -15,7 +15,7 @@ concurrency:
 jobs:
   tests:
     name: Android tests and build
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
 
     steps:
@@ -28,11 +28,15 @@ jobs:
           distribution: temurin
           java-version: '25'
 
-      - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
-
+      # Use the SDK already installed on the GitHub-hosted runner.
+      # Run sdkmanager with Java 17; Gradle continues to use Java 25.
       - name: Install Android platform
-        run: sdkmanager 'platforms;android-36.1' 'build-tools;36.0.0'
+        shell: bash
+        run: |
+          export JAVA_HOME="$JAVA_HOME_17_X64"
+          export PATH="$JAVA_HOME/bin:$PATH"
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --version
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" 'platforms;android-36.1' 'build-tools;36.0.0'
 
       # Match gradle/wrapper/gradle-wrapper.properties; gradlew is not tracked.
       - name: Set up Gradle
