@@ -166,9 +166,13 @@ class AcademicRepository(
 
     suspend fun extractDocuments(documents: List<DocumentUpload>): List<ExtractedSyllabus> {
         require(documents.isNotEmpty()) { "Selecione pelo menos um arquivo." }
-        require(documents.size <= 10) { "Selecione no máximo 10 imagens." }
-        require(documents.size == 1 || documents.all { it.mimeType.startsWith("image/") }) {
-            "O envio múltiplo aceita somente imagens."
+        require(documents.size <= 10) { "Selecione no máximo 10 arquivos." }
+        require(documents.all { it.mimeType == "application/pdf" } || documents.all { it.mimeType.startsWith("image/") }) {
+            "Selecione apenas PDFs ou apenas imagens por análise."
+        }
+        if (documents.size > 1 && documents.all { it.mimeType == "application/pdf" }) {
+            // The API accepts one PDF per request; keep image batches together.
+            return documents.flatMap { document -> extractDocuments(listOf(document)) }
         }
         val parts = documents.map { document ->
             val bytes = context.contentResolver.openInputStream(document.uri)?.use { it.readBytes() }
