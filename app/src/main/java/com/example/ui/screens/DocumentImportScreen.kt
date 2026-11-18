@@ -178,10 +178,12 @@ fun DocumentImportScreen(
     }
 
     val pdfPickerLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.OpenDocument()
-    ) { uri: Uri? ->
-        if (uri != null) {
-            selectedFiles = runCatching { listOf(readSelectedFile(uri)) }.getOrDefault(emptyList())
+        contract = ActivityResultContracts.OpenMultipleDocuments()
+    ) { uris: List<Uri> ->
+        if (uris.isNotEmpty()) {
+            val added = uris.mapNotNull { uri -> runCatching { readSelectedFile(uri) }.getOrNull() }
+            selectedFiles = (selectedFiles.filter { it.mimeType == "application/pdf" } + added)
+                .distinctBy { it.uri }.take(10)
         }
     }
 
@@ -469,7 +471,7 @@ fun DocumentImportScreen(
                             }
                             Spacer(modifier = Modifier.height(8.dp))
                             Text(
-                                text = "Escolha um PDF ou imagem. A IA identifica disciplinas, aulas e avaliações para você revisar antes de adicionar ao calendário.",
+                                text = "Escolha até 10 PDFs ou imagens. A IA identifica disciplinas, aulas e avaliações para você revisar antes de adicionar ao calendário.",
                                 fontSize = 12.sp,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
@@ -486,7 +488,7 @@ fun DocumentImportScreen(
                                 ) {
                                     Icon(Icons.Default.PictureAsPdf, contentDescription = null, modifier = Modifier.size(18.dp))
                                     Spacer(modifier = Modifier.width(5.dp))
-                                    Text("PDF", fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                                    Text("PDFs", fontWeight = FontWeight.Bold, fontSize = 12.sp)
                                 }
                                 Button(
                                     onClick = {
@@ -516,13 +518,20 @@ fun DocumentImportScreen(
                                             Spacer(modifier = Modifier.width(8.dp))
                                             Column {
                                                 Text(
-                                                    if (selectedFiles.size == 1) "Arquivo pronto para processar" else "${selectedFiles.size} imagens da mesma disciplina",
+                                                    when {
+                                                        selectedFiles.size == 1 -> "Arquivo pronto para processar"
+                                                        selectedFiles.all { it.mimeType == "application/pdf" } -> "${selectedFiles.size} PDFs prontos para processar"
+                                                        else -> "${selectedFiles.size} imagens da mesma disciplina"
+                                                    },
                                                     color = Color(0xFF14532D),
                                                     fontWeight = FontWeight.Bold,
                                                     fontSize = 13.sp
                                                 )
                                                 if (selectedFiles.size > 1) {
-                                                    Text("As imagens serão analisadas em conjunto", color = Color(0xFF15803D), fontSize = 11.sp)
+                                                    Text(
+                                                        if (selectedFiles.all { it.mimeType == "application/pdf" }) "Cada PDF será analisado separadamente" else "As imagens serão analisadas em conjunto",
+                                                        color = Color(0xFF15803D), fontSize = 11.sp
+                                                    )
                                                 }
                                             }
                                         }
@@ -549,6 +558,16 @@ fun DocumentImportScreen(
                                                 ) {
                                                     Icon(Icons.Default.Close, contentDescription = "Remover ${file.name}", tint = Color(0xFF166534), modifier = Modifier.size(17.dp))
                                                 }
+                                            }
+                                        }
+                                        if (selectedFiles.all { it.mimeType == "application/pdf" } && selectedFiles.size < 10) {
+                                            TextButton(
+                                                onClick = { pdfPickerLauncher.launch(arrayOf("application/pdf")) },
+                                                modifier = Modifier.fillMaxWidth()
+                                            ) {
+                                                Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(17.dp))
+                                                Spacer(modifier = Modifier.width(5.dp))
+                                                Text("Adicionar PDFs (até 10 arquivos)", fontSize = 11.sp)
                                             }
                                         }
                                         if (selectedFiles.all { it.mimeType.startsWith("image/") } && selectedFiles.size < 10) {
