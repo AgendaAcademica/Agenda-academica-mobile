@@ -2,6 +2,8 @@ package com.example.data.auth
 
 import android.content.Context
 import com.example.BuildConfig
+import com.google.firebase.FirebaseNetworkException
+import com.google.firebase.FirebaseTooManyRequestsException
 import com.google.firebase.FirebaseApp
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.auth.FirebaseAuthException
@@ -25,7 +27,7 @@ class FirebaseAuthRepository(context: Context) {
     val initialState: AuthState
         get() = when {
             !configured -> AuthState.ConfigurationRequired
-            auth?.currentUser != null -> AuthState.SignedIn(auth.currentUser!!)
+            auth?.currentUser != null -> AuthState.SignedIn(requireNotNull(auth.currentUser))
             else -> AuthState.SignedOut
         }
 
@@ -42,24 +44,27 @@ class FirebaseAuthRepository(context: Context) {
         if (listener != null) auth?.removeAuthStateListener(listener)
     }
 
-    fun signIn(email: String, password: String, onResult: (String?) -> Unit) {
+    fun continueWithEmail(email: String, password: String, onResult: (String?) -> Unit) {
         val currentAuth = auth ?: return onResult(CONFIGURATION_MESSAGE)
-        currentAuth.signInWithEmailAndPassword(email.trim(), password)
-            .addOnSuccessListener { result ->
-                result.user?.let(::recordLogin)
-                onResult(null)
+        val service = object : EmailAccountService {
+            override fun signIn(credentials: EmailCredentials, onResult: (Result<Unit>) -> Unit) {
+                currentAuth.signInWithEmailAndPassword(credentials.email, credentials.password)
+                    .addOnSuccessListener { onResult(Result.success(Unit)) }
+                    .addOnFailureListener { onResult(Result.failure(it)) }
             }
-            .addOnFailureListener { onResult(userMessage(it)) }
-    }
 
-    fun register(email: String, password: String, onResult: (String?) -> Unit) {
-        val currentAuth = auth ?: return onResult(CONFIGURATION_MESSAGE)
-        currentAuth.createUserWithEmailAndPassword(email.trim(), password)
-            .addOnSuccessListener { result ->
-                result.user?.let(::createUserRecord)
-                onResult(null)
+            override fun createAccount(credentials: EmailCredentials, onResult: (Result<Unit>) -> Unit) {
+                currentAuth.createUserWithEmailAndPassword(credentials.email, credentials.password)
+                    .addOnSuccessListener { result ->
+                        result.user?.let(::createUserRecord)
+                        onResult(Result.success(Unit))
+                    }
+                    .addOnFailureListener { onResult(Result.failure(it)) }
             }
-            .addOnFailureListener { onResult(userMessage(it)) }
+        }
+        EmailAccountAccess(service).continueWithEmail(EmailCredentials(email, password)) { result ->
+            onResult(result.exceptionOrNull()?.let { userMessage(it) })
+        }
     }
 
     fun sendPasswordReset(email: String, onResult: (String?) -> Unit) {
@@ -96,9 +101,12 @@ class FirebaseAuthRepository(context: Context) {
     companion object {
         const val CONFIGURATION_MESSAGE = "O acesso ainda não foi configurado para esta versão do aplicativo."
 
-        internal fun userMessage(error: Exception): String = when ((error as? FirebaseAuthException)?.errorCode) {
+        internal fun userMessage(error: Throwable): String {
+            if (error is FirebaseNetworkException) return "Não foi possível conectar. Verifique sua internet e tente novamente."
+            if (error is FirebaseTooManyRequestsException) return "Muitas tentativas foram realizadas. Aguarde um pouco e tente novamente."
+            return when ((error as? FirebaseAuthException)?.errorCode) {
             "ERROR_INVALID_EMAIL" -> "Informe um endereço de e-mail válido."
-            "ERROR_WRONG_PASSWORD", "ERROR_INVALID_CREDENTIAL", "ERROR_USER_NOT_FOUND" ->
+            "ERROR_WRONG_PASSWORD", "ERROR_INVALID_CREDENTIAL", "ERROR_INVALID_LOGIN_CREDENTIALS", "ERROR_USER_NOT_FOUND" ->
                 "E-mail ou senha incorretos."
             "ERROR_EMAIL_ALREADY_IN_USE" -> "Este e-mail já possui uma conta."
             "ERROR_WEAK_PASSWORD" -> "Use uma senha com pelo menos 6 caracteres."
@@ -106,6 +114,7 @@ class FirebaseAuthRepository(context: Context) {
             "ERROR_NETWORK_REQUEST_FAILED" -> "Não foi possível conectar. Verifique sua internet e tente novamente."
             "ERROR_TOO_MANY_REQUESTS" -> "Muitas tentativas foram realizadas. Aguarde um pouco e tente novamente."
             else -> "Não foi possível concluir o acesso. Tente novamente."
+            }
         }
     }
 }
