@@ -26,3 +26,15 @@ As disciplinas, aulas, notas e faltas continuam armazenadas localmente no aparel
 - Confirmar o documento em `users` no Firestore.
 - Processar um documento e confirmar um registro na subcoleção `aiUsage`.
 - Sair e entrar novamente para validar a persistência da sessão.
+
+## Acesso automático por e-mail
+
+A tela usa um único fluxo de e-mail e senha sem opção de cadastro manual.
+O Firebase Authentication verifica as credenciais; um e-mail ainda sem conta
+é cadastrado automaticamente com a senha informada. Uma senha incorreta de uma
+conta existente retorna erro e nunca altera a conta. Falhas de rede, conta
+desativada e limite de tentativas não iniciam cadastro.
+
+A coleção privada `users` continua sendo gravada após a autenticação. Ela não
+é consultada publicamente para descobrir contas. Nenhuma regra Firestore precisa
+ser aberta. O acesso com Google foi removido da tela.

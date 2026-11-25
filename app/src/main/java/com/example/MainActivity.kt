@@ -95,8 +95,7 @@ private fun AcademicAgendaRoot(
             isSubmitting = isSubmitting,
             message = authMessage,
             configurationRequired = authState == AuthState.ConfigurationRequired,
-            onSignIn = authViewModel::signIn,
-            onRegister = authViewModel::register,
+            onContinue = authViewModel::continueWithEmail,
             onResetPassword = authViewModel::resetPassword,
             onClearMessage = authViewModel::clearMessage
         )

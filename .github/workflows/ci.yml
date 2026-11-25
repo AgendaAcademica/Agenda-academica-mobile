@@ -1,0 +1,66 @@
+name: Mobile CI
+
+on:
+  pull_request:
+    branches: [develop, main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  tests:
+    name: Android tests and build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      - name: Set up Java
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '25'
+
+      # Use the SDK already installed on the GitHub-hosted runner.
+      # Run sdkmanager with Java 17; Gradle continues to use Java 25.
+      - name: Install Android platform
+        shell: bash
+        run: |
+          export JAVA_HOME="$JAVA_HOME_17_X64"
+          export PATH="$JAVA_HOME/bin:$PATH"
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --version
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" 'platforms;android-36.1' 'build-tools;36.0.0'
+
+      # Match gradle/wrapper/gradle-wrapper.properties; gradlew is not tracked.
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v5
+        with:
+          gradle-version: '9.3.1'
+
+      - name: Run unit and Robolectric tests
+        run: gradle :app:testDebugUnitTest --no-daemon --stacktrace
+
+      - name: Run Android Lint
+        run: gradle :app:lintDebug --no-daemon --stacktrace
+
+      - name: Build debug APK
+        run: gradle :app:assembleDebug --no-daemon --stacktrace
+
+      - name: Upload test and lint reports
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v6
+        with:
+          name: android-test-and-lint-reports
+          path: |
+            app/build/reports/tests/
+            app/build/test-results/
+            app/build/reports/lint-results-debug.*
+          if-no-files-found: ignore
+          retention-days: 7

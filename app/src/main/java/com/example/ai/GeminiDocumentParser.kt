@@ -1,18 +1,9 @@
 package com.example.ai
 
-import android.util.Log
-import com.example.BuildConfig
 import com.example.data.model.ActivityType
 import com.example.data.model.Priority
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
-import okhttp3.MediaType.Companion.toMediaType
-import okhttp3.OkHttpClient
-import okhttp3.Request
-import okhttp3.RequestBody.Companion.toRequestBody
-import org.json.JSONArray
-import org.json.JSONObject
-import java.util.concurrent.TimeUnit
 import java.util.regex.Pattern
 
 data class ExtractedSyllabus(
@@ -39,151 +30,9 @@ data class ExtractedEvent(
 )
 
 object GeminiDocumentParser {
-    private const val TAG = "GeminiDocParser"
-    private const val MODEL_NAME = "gemini-3.5-flash"
-    private const val API_URL = "https://generativelanguage.googleapis.com/v1beta/models/$MODEL_NAME:generateContent"
-
-    private val httpClient = OkHttpClient.Builder()
-        .connectTimeout(30, TimeUnit.SECONDS)
-        .readTimeout(30, TimeUnit.SECONDS)
-        .writeTimeout(30, TimeUnit.SECONDS)
-        .build()
-
+    // AI extraction is handled by the backend. Keep this legacy entry point local.
     suspend fun parseAcademicDocument(documentText: String, fileName: String = "documento.pdf"): ExtractedSyllabus = withContext(Dispatchers.IO) {
-        val apiKey = BuildConfig.GEMINI_API_KEY
-
-        if (apiKey.isNotEmpty() && apiKey != "MY_GEMINI_API_KEY") {
-            try {
-                val prompt = buildPrompt(documentText, fileName)
-                val jsonPayload = JSONObject().apply {
-                    val contents = JSONArray().apply {
-                        put(JSONObject().apply {
-                            val parts = JSONArray().apply {
-                                put(JSONObject().apply { put("text", prompt) })
-                            }
-                            put("parts", parts)
-                        })
-                    }
-                    put("contents", contents)
-                    put("generationConfig", JSONObject().apply {
-                        put("temperature", 0.1)
-                        put("responseMimeType", "application/json")
-                    })
-                }
-
-                val request = Request.Builder()
-                    .url("$API_URL?key=$apiKey")
-                    .post(jsonPayload.toString().toRequestBody("application/json".toMediaType()))
-                    .build()
-
-                val response = httpClient.newCall(request).execute()
-                if (response.isSuccessful) {
-                    val responseBody = response.body?.string() ?: ""
-                    val root = JSONObject(responseBody)
-                    val candidates = root.optJSONArray("candidates")
-                    val firstCandidate = candidates?.optJSONObject(0)
-                    val contentObj = firstCandidate?.optJSONObject("content")
-                    val parts = contentObj?.optJSONArray("parts")
-                    val text = parts?.optJSONObject(0)?.optString("text") ?: ""
-
-                    val parsed = parseStructuredJson(text, fileName, documentText)
-                    if (parsed != null && parsed.events.isNotEmpty()) {
-                        return@withContext parsed
-                    }
-                } else {
-                    Log.w(TAG, "Gemini API error code: ${response.code}, falling back to semantic parser")
-                }
-            } catch (e: Exception) {
-                Log.e(TAG, "Gemini API call failed: ${e.message}, using smart local extractor", e)
-            }
-        }
-
-        // Fallback: Smart local rule-based extractor
-        return@withContext smartLocalParser(documentText, fileName)
-    }
-
-    private fun buildPrompt(documentText: String, fileName: String): String {
-        return """
-            Você é um assistente de inteligência artificial especializado em estruturar documentos acadêmicos (planos de ensino, cronogramas de aulas, calendários de provas e PDFs acadêmicos).
-            
-            Analise o seguinte documento acadêmico ("$fileName") e extraia rigorosamente todas as informações em formato JSON estruturado com o seguinte schema:
-            {
-              "documentTitle": "Título do Documento",
-              "disciplineName": "Nome da Disciplina (ex: Engenharia de Software, Cálculo, etc)",
-              "disciplineCode": "Código (ex: ES204, se houver)",
-              "professor": "Nome do Professor",
-              "term": "Período Letivo (ex: 2026/2)",
-              "classroom": "Sala ou Laboratório",
-              "schedule": "Dias e horários das aulas (ex: Terça e Quinta, 14:00 - 16:00)",
-              "recommendedColorHex": "Cor Hex sugerida (ex: #2563EB para exatas, #16A34A para eng/software, #EA580C para dados, #9333EA para computação)",
-              "events": [
-                {
-                  "title": "Nome descritivo da atividade ou aula",
-                  "date": "YYYY-MM-DD (usando ano 2026 e datas identificadas)",
-                  "time": "HH:MM (use string vazia quando o horário não estiver informado)",
-                  "activityType": "AULA | PROVA | TRABALHO | EXERCICIO | SEMINARIO | PROJETO | LEITURA | PRAZO_ENTREGA | EVENTO",
-                  "priority": "BAIXA | MEDIA | ALTA | URGENTE",
-                  "description": "Detalhes dos tópicos ou instruções",
-                  "dueDate": "YYYY-MM-DD se for entrega"
-                }
-              ]
-            }
-
-            Texto do documento:
-            $documentText
-        """.trimIndent()
-    }
-
-    private fun parseStructuredJson(jsonStr: String, fallbackFileName: String, originalText: String): ExtractedSyllabus? {
-        return try {
-            val cleanJson = jsonStr.trim().removePrefix("```json").removePrefix("```").removeSuffix("```").trim()
-            val obj = JSONObject(cleanJson)
-            val docTitle = obj.optString("documentTitle", "Documento Acadêmico")
-            val discName = obj.optString("disciplineName", "Disciplina")
-            val discCode = obj.optString("disciplineCode", "")
-            val prof = obj.optString("professor", "")
-            val term = obj.optString("term", "2026/2")
-            val room = obj.optString("classroom", "")
-            val sched = obj.optString("schedule", "")
-            val color = obj.optString("recommendedColorHex", "#2563EB")
-
-            val eventsArr = obj.optJSONArray("events") ?: JSONArray()
-            val events = mutableListOf<ExtractedEvent>()
-            for (i in 0 until eventsArr.length()) {
-                val eObj = eventsArr.getJSONObject(i)
-                val typeStr = eObj.optString("activityType", "TRABALHO")
-                val type = runCatching { ActivityType.valueOf(typeStr) }.getOrDefault(ActivityType.TRABALHO)
-                val prioStr = eObj.optString("priority", "MEDIA")
-                val prio = runCatching { Priority.valueOf(prioStr) }.getOrDefault(Priority.MEDIA)
-
-                events.add(
-                    ExtractedEvent(
-                        title = eObj.optString("title", "Atividade"),
-                        date = eObj.optString("date", "2026-09-10"),
-                        time = eObj.optString("time", ""),
-                        activityType = type,
-                        priority = prio,
-                        description = eObj.optString("description", ""),
-                        dueDate = if (eObj.has("dueDate") && !eObj.isNull("dueDate")) eObj.optString("dueDate") else null
-                    )
-                )
-            }
-
-            ExtractedSyllabus(
-                documentTitle = docTitle,
-                disciplineName = discName,
-                disciplineCode = discCode,
-                professor = prof,
-                term = term,
-                classroom = room,
-                schedule = sched,
-                recommendedColorHex = color,
-                events = events
-            )
-        } catch (e: Exception) {
-            Log.e(TAG, "JSON parsing error: ${e.message}")
-            null
-        }
+        smartLocalParser(documentText, fileName)
     }
 
     fun smartLocalParser(text: String, fileName: String): ExtractedSyllabus {
