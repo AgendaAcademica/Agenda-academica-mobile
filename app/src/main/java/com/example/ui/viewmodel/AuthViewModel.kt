@@ -24,15 +24,12 @@ class AuthViewModel(application: Application) : AndroidViewModel(application) {
         _state.value = it
     }
 
-    fun signIn(email: String, password: String) = submit {
-        repository.signIn(email, password, it)
-    }
-
-    fun register(email: String, password: String) = submit {
-        repository.register(email, password, it)
+    fun continueWithEmail(email: String, password: String) = submit {
+        repository.continueWithEmail(email, password, it)
     }
 
     fun resetPassword(email: String) {
+        if (_isSubmitting.value) return
         _isSubmitting.value = true
         repository.sendPasswordReset(email) { error ->
             _isSubmitting.value = false
@@ -47,6 +44,7 @@ class AuthViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     private fun submit(action: ((String?) -> Unit) -> Unit) {
+        if (_isSubmitting.value) return
         _isSubmitting.value = true
         _message.value = null
         action { error ->
